@@ -8,25 +8,25 @@ This file is based on an other code written by Lei Shi (:download:`code <../../.
 
 import numpy as np
 import os.path
+import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
 
+#convenience gateway to load XGC1 or XGCa data
+def load(*args,**kwargs):
+    file_path = os.path.join(args[0],'')
 
-def load_m(fname):
-    """load the whole .m file and return a dictionary contains all the entries.
-    """
-    f = open(fname,'r')
-    result = {}
-    for line in f:
-        words = line.split('=')
-        key = words[0].strip()
-        value = words[1].strip(' ;\n')
-        result[key]= float(value)
-    f.close()
-    return result
+    if len(glob.glob(file_path+'xgc.3d*')) > 0:
+        return xgc1Load(*args,**kwargs)
+    
+    elif len(glob.glob(file_path+'xgc.2d*')) > 0:
+        return xgcaLoad(*args,**kwargs)
+
+    else:
+        raise ValueError('XGC files not found in '+file_path)
 
 
-class xgcLoad():
+class _load(object):
     """Loader class for general use.
 
     The idea of this loader is to load all data, limiting spatially and temporally as user-specified.
@@ -50,8 +50,8 @@ class xgcLoad():
 
         print 'Loading XGC output data'
         
-        self.xgc_path = xgc_path
-        self.mesh_file=xgc_path+'xgc.mesh'
+        self.xgc_path = os.path.join(xgc_path,'')  #get file_path, add path separator if not there
+        self.mesh_file=self.xgc_path+'xgc.mesh'
         #check if files are in HDF5 or ADIOS format
         if os.path.exists(self.mesh_file+'.bp'):
             ext='.bp';
@@ -67,11 +67,11 @@ class xgcLoad():
         print 'from directory:'+ self.xgc_path
 
         #read in units file
-        self.unit_file = xgc_path+'units.m'
-        self.unit_dic = load_m(self.unit_file)
+        self.unit_file = self.xgc_path+'units.m'
+        self.unit_dic = self.load_m(self.unit_file)
 
         #read in time
-        self.oneddiag_file=xgc_path+'xgc.oneddiag'
+        self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.time = self.readCmd(self.oneddiag_file,'time')
         self.t_start=t_start
         self.t_end=t_end        
@@ -92,28 +92,32 @@ class xgcLoad():
         self.psinMin=psinMin
         self.psinMax=psinMax
 
-        #read in number of planes
-        fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
-        self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
-        self.phi_start=phi_start
-        self.phi_end = phi_end
-        if phi_end is None: self.phi_end=self.Nplanes
-        self.Nplanes=self.phi_end-self.phi_start+1
-
         self.kind = kind
         
         
         #read in mesh, equilibrium data, and finally fluctuation data
+        print 'Loading mesh and psi...'
         self.loadMesh()
         print 'mesh and psi loaded.'
         
+        print 'Loading equilibrium...'
         self.loadEquil()
         print 'equlibrium loaded.'
 
-        self.loadFluc()
-        print 'fluctuations loaded'
-
     
+    def load_m(self,fname):
+        """load the whole .m file and return a dictionary contains all the entries.
+        """
+        f = open(fname,'r')
+        result = {}
+        for line in f:
+            words = line.split('=')
+            key = words[0].strip()
+            value = words[1].strip(' ;\n')
+            result[key]= float(value)
+        f.close()
+        return result
+
     def loadMesh(self):
         """load R-Z mesh and psi values, then create map between each psi 
            value and the series of points on that surface.
@@ -163,7 +167,7 @@ class xgcLoad():
         indices=np.where(self.rzInds)[0]
         for i in range(len(indices)):
             self.tri[self.tri==indices[i]]=i
-        
+
 
     def loadEquil(self):
         """Load equilibrium profiles and compute the interpolant
@@ -188,6 +192,23 @@ class xgcLoad():
         self.te0_sp = splrep(self.psin1D,self.Te1D,k=1)
         self.ne0_sp = splrep(self.psin1D,self.ne1D,k=1)
 
+
+class xgc1Load(_load):
+    def __init__(self,xgc_path,phi_start=0,phi_end=None,**kwargs):
+        #call parent loading init, including mesh and equilibrium
+        super(xgc1Load,self).__init__(xgc_path,**kwargs)
+
+        #read in number of planes
+        fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
+        self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
+        self.phi_start=phi_start
+        self.phi_end = phi_end
+        if phi_end is None: self.phi_end=self.Nplanes
+        self.Nplanes=self.phi_end-self.phi_start
+        
+        print 'Loading fluctuations...'
+        self.loadFluc()
+        print 'fluctuations loaded'
 
     def loadFluc(self):
         """Load non-adiabatic electron density and electrical static 
@@ -244,3 +265,9 @@ class xgcLoad():
 
         #TODO I've ignored checking whether dne<<ne0, etc. may want to add
         return ne
+
+
+class xgcaLoad(_load):
+    def __init__(self,*args,**kwargs):
+        #call parent loading init, including mesh and equilibrium
+        super().__init__(*args,**kwargs)
