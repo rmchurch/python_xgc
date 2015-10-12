@@ -56,7 +56,7 @@ class _load(object):
         if os.path.exists(self.mesh_file+'.bp'):
             ext='.bp';
             import adios
-            self.readCmd=lambda x,v: adiosreadvar(x+ext,v)
+            self.readCmd=lambda x,v: adios.readvar(x+ext,'/'+v)
         elif os.path.exists(self.mesh_file+'.h5'):
             ext='.h5';
             import h5py
@@ -268,6 +268,43 @@ class xgc1Load(_load):
 
 
 class xgcaLoad(_load):
-    def __init__(self,*args,**kwargs):
+    def __init__(self,xgc_path,**kwargs):
         #call parent loading init, including mesh and equilibrium
-        super().__init__(*args,**kwargs)
+        super(xgcaLoad,self).__init__(xgc_path,**kwargs)
+
+    def load2D():
+        self.iden = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        
+        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.epsi = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.etheta = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        
+        
+        for i in range(self.t_start,self.t_end+1):
+            twodFile = self.xgc_path + 'xgc.2d.'+str(i).zfill(5)
+
+            self.iden[:,i-1] = self.readCmd(flucFile,'iden')[self.rzInds]
+
+            self.dpot[:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds]
+            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0')[self.rzInds]
+            self.epsi[:,i-1] = self.readCmd(flucFile,'epsi')[self.rzInds]
+            self.etheta[:,i-1] = self.readCmd(flucFile,'etheta')[self.rzInds]
+            
+
+        
+
+
+class gengridLoad():
+    def __init__(self,file_path):
+        self.file_path = file_path
+
+        #read in the grid data from node file
+        #TODO Read in ele and poly components also
+        f = open(self.file_path,'r')
+        Nlines = int(f.readline().split()[0])
+        self.RZ = np.empty([Nlines,2])
+        for i,line in enumerate(f):
+            if i >= Nlines: break
+            self.RZ[i,0:2] = np.array(line.split()[1:3],dtype='float')
+
