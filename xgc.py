@@ -8,6 +8,7 @@ This file is based on an other code written by Lei Shi (:download:`code <../../.
 
 import numpy as np
 import os.path
+import sys
 import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
@@ -47,6 +48,15 @@ class _load(object):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
         """
+        def readAdios(x,v):
+            if '/' in v: v = '/'+v
+            if type(x) is adios.file:
+                return x[v][:]
+            else:
+                return adios.file(x+'.bp')[v][:]
+
+        def readHDF5(x,v):
+            return h5py.File(x+'.h5','r')[v][:]
 
         print 'Loading XGC output data'
         
@@ -54,13 +64,11 @@ class _load(object):
         self.mesh_file=self.xgc_path+'xgc.mesh'
         #check if files are in HDF5 or ADIOS format
         if os.path.exists(self.mesh_file+'.bp'):
-            ext='.bp';
             import adios
-            self.readCmd=lambda x,v: adios.readvar(x+ext,'/'+v)
+            self.readCmd=readAdios
         elif os.path.exists(self.mesh_file+'.h5'):
-            ext='.h5';
             import h5py
-            self.readCmd=lambda x,v: h5py.File(x+ext,'r')[v][:]
+            self.readCmd=readHDF5
         else:
             raise ValueError('No xgc.mesh file found')
 
@@ -72,7 +80,8 @@ class _load(object):
 
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
-        self.time = self.readCmd(self.oneddiag_file,'time')
+        self.mask1d = self.oned_mask()
+        self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
         self.t_start=t_start
         self.t_end=t_end        
         if self.t_end is None: self.t_end=len(self.time)
@@ -82,13 +91,15 @@ class _load(object):
         self.dt = self.tstep * dt
         self.Ntimes = len(self.time)
 
+        #magnetics file
+        self.bfield_file=self.xgc_path+'xgc.bfield'
 
         # limits of the mesh in tokamak coordinates. Set to min,max of arrays in loadMesh()
         #if unspecified by user
-        self.Rmin = Rmin
-        self.Rmax = Rmax
-        self.Zmin = Zmin
-        self.Zmax = Zmax
+        self.Rmin = self.unit_dic['eq_x_r'] if 'x' in str(Rmin).lower() else Rmin
+        self.Rmax = self.unit_dic['eq_x_r'] if 'x' in str(Rmax).lower() else Rmax
+        self.Zmin = self.unit_dic['eq_x_z'] if 'x' in str(Zmin).lower() else Zmin
+        self.Zmax = self.unit_dic['eq_x_z'] if 'x' in str(Zmax).lower() else Zmax
         self.psinMin=psinMin
         self.psinMax=psinMax
 
@@ -98,11 +109,15 @@ class _load(object):
         #read in mesh, equilibrium data, and finally fluctuation data
         print 'Loading mesh and psi...'
         self.loadMesh()
-        print 'mesh and psi loaded.'
+        print '\tmesh and psi loaded.'
+        
+        print 'Loading magnetics...'
+        self.loadBfield()
+        print'\tmagnetics loaded.'
         
         print 'Loading equilibrium...'
         self.loadEquil()
-        print 'equlibrium loaded.'
+        print '\tequlibrium loaded.'
 
     
     def load_m(self,fname):
@@ -128,7 +143,7 @@ class _load(object):
         Z=RZ[:,1]
         psi = self.readCmd(self.mesh_file,'psi')
         psin = psi/self.unit_dic['psi_x']
-        tri=self.readCmd(self.mesh_file,'/cell_set[0]/node_connect_list') #already 0-based
+        tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
 
         # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
@@ -155,7 +170,7 @@ class _load(object):
             self.psi_interp = CloughTocher2DInterpolator(
                 self.RZ, self.psin, fill_value=fill_)
         else:
-            raise NameError("The method '{}' is not defined".format(self.kind))
+            raise NameError("The method '{}' is not defined".format(self.kind))        
 
         #get the triangles which are all contained within the vertices defined by
         #the indexes igrid
@@ -182,15 +197,44 @@ class _load(object):
           etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_avg')
         except:
           etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_1d')
-          etemp_per=selfreadCmd(self.oneddiag_file,'e_perp_temperature_1d')
-        self.Te1D=(etemp_par[0,:]+etemp_per[0,:])*2./3
+          etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_1d')
+        self.Te1D=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
 
         #read electron density
-        self.ne1D = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[0,:]
+        self.ne1D = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
 
-        #create splines
-        self.te0_sp = splrep(self.psin1D,self.Te1D,k=1)
-        self.ne0_sp = splrep(self.psin1D,self.ne1D,k=1)
+        #read n=0,m=0 potential
+        self.psin001D = self.readCmd(self.oneddiag_file,'psi00_1d')/sef.unit_dic['psi_x']
+        if self.psin001D.ndim > 1: self.psin001D = self.psin001D[0,:]
+        self.pot001D = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
+        
+        #create splines for t=0 data
+        self.te0_sp = splrep(self.psin1D,self.Te1D[0,:],k=1)
+        self.ne0_sp = splrep(self.psin1D,self.ne1D[0,:],k=1)
+
+    def loadBfield(self):
+        """Load magnetic field
+        """
+
+        self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+
+    def oned_mask(self):
+        """Match oned data to 3d files, in cases of restart.
+           Use this on oneddiag variables, e.g. n_e1d = ad.file('xgc.oneddiag.bp','e_gc_density_1d')[mask1d,:]
+        """
+        try:
+            step = self.readCmd(self.oneddiag_file,'step')
+            dstep = step[1] - step[0]
+        
+            idx = np.arange(step[0]/dstep,step[-1]/dstep+1)
+        
+            mask1d = np.zeros(idx.shape,dtype=np.int32)
+            for i in idx:
+                mask1d[i-1] = np.where(step == i*dstep)[0][-1] #get last occurence
+        except:
+            mask1d = Ellipsis #pass variables unaffected
+        
+        return mask1d
 
 
 class xgc1Load(_load):
@@ -226,7 +270,7 @@ class xgc1Load(_load):
         
         for i in range(self.t_start,self.t_end+1):
             flucFile = self.xgc_path + 'xgc.3d.'+str(i).zfill(5)
-
+            sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
             self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
             
             self.eden[:,:,i-1] = self.readCmd(flucFile,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
@@ -260,7 +304,7 @@ class xgc1Load(_load):
         factAdiabatic = np.exp(np.einsum('i...,i...->i...',self.dpot,1./te0))
         neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
 
-        #ne = neAdiatbatice + dneKinetic
+        #ne = neAdiatbatic + dneKinetic
         ne = neAdiabatic + self.eden
 
         #TODO I've ignored checking whether dne<<ne0, etc. may want to add
