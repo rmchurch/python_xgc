@@ -204,7 +204,10 @@ class _load(object):
         self.ne1D = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
 
         #read n=0,m=0 potential
-        self.psin001D = self.readCmd(self.oneddiag_file,'psi00_1d')/sef.unit_dic['psi_x']
+        try:
+            self.psin001D = self.readCmd(self.oneddiag_file,'psi00_1d')/sef.unit_dic['psi_x']
+        else:
+            self.psin001D = self.readCmd(self.oneddiag_file,'psi00')/sef.unit_dic['psi_x']
         if self.psin001D.ndim > 1: self.psin001D = self.psin001D[0,:]
         self.pot001D = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
         
