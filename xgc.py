@@ -254,8 +254,8 @@ class _load(object):
 class xgc1Load(_load):
     def __init__(self,xgc_path,phi_start=0,phi_end=None,**kwargs):
         #call parent loading init, including mesh and equilibrium
-        super().__init__(*args,**kwargs)
-        # super(xgc1Load,self).__init__(xgc_path,**kwargs)
+        #super().__init__(*args,**kwargs)
+        super(xgc1Load,self).__init__(xgc_path,**kwargs)
 
         #read in number of planes
         fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
@@ -331,8 +331,8 @@ class xgc1Load(_load):
 class xgcaLoad(_load):
     def __init__(self,xgc_path,**kwargs):
         #call parent loading init, including mesh and equilibrium
-        super().__init__(*args,**kwargs)
-        # super(xgcaLoad,self).__init__(xgc_path,**kwargs)
+        #super().__init__(*args,**kwargs)
+        super(xgcaLoad,self).__init__(xgc_path,**kwargs)
 
         print 'Loading f0 data...'
         self.loadf0()
