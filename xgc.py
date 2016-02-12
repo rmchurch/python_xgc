@@ -32,12 +32,23 @@ class _load(object):
 
     The idea of this loader is to load all data, limiting spatially and temporally as user-specified.
 
+    INPUTS
     :param str xgc_path: Name of the directory containing the data
-    :param int t_start: Time step at which starting the diagnostics
-    :param int t_end: Time step at which stoping the diagnostics
+
+    OPTIONAL
+    :param int t_start: Time step at which starting the diagnostics [1-based indexed (to match file)]
+    :param int t_end: Time step at which stoping the diagnostics [1-based indexed (to match file)]
     :param int dt: Interval between two time step that the diagnostics should compute
-    :param np.array[...,2] limits: Mesh limits for the diagnostics. Give an np.array[2,2], 
-        in this case, R/Z_min and R/Z_max are given (first index is for R,Z).\
+    :param float Rmin: Limit minimum major radius of data
+    :param float Rmax: Limit maximum major radius of data
+    :param float Zmin: Limit minimum vertical coordinate of data
+    :param float Zmax: Limit maximum vertical coordinate of data
+    :param float psinMin: Limit minimum normalized poloidal flux ("psi-normal") of data
+    :param float psinMax: Limit maximum normalized poloidal flux ("psi-normal") of data
+    :param int phi_start: Toroidal plane index to start data [0-based indexed]
+    :param int phi_end: Toroidal plane index to stop data [0-based indexed]
+
+
     :param str kind: Order of the interpolation method (linear or cubic))
     """
 
@@ -205,9 +216,9 @@ class _load(object):
 
         #read n=0,m=0 potential
         try:
-            self.psin001D = self.readCmd(self.oneddiag_file,'psi00_1d')/sef.unit_dic['psi_x']
-        else:
-            self.psin001D = self.readCmd(self.oneddiag_file,'psi00')/sef.unit_dic['psi_x']
+            self.psin001D = self.readCmd(self.oneddiag_file,'psi00_1d')/self.unit_dic['psi_x']
+        except:
+            self.psin001D = self.readCmd(self.oneddiag_file,'psi00')/self.unit_dic['psi_x']
         if self.psin001D.ndim > 1: self.psin001D = self.psin001D[0,:]
         self.pot001D = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
         
@@ -250,8 +261,8 @@ class xgc1Load(_load):
         self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
         self.phi_start=phi_start
         self.phi_end = phi_end
-        if phi_end is None: self.phi_end=self.Nplanes
-        self.Nplanes=self.phi_end-self.phi_start
+        if phi_end is None: self.phi_end=self.Nplanes-1
+        self.Nplanes=self.phi_end-self.phi_start+1
         
         print 'Loading fluctuations...'
         self.loadFluc()
