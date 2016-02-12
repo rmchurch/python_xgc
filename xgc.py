@@ -267,7 +267,37 @@ class xgc1Load(_load):
         return ne
 
 
+
+
 class xgcaLoad(_load):
     def __init__(self,*args,**kwargs):
         #call parent loading init, including mesh and equilibrium
         super().__init__(*args,**kwargs)
+
+        print 'Loading f0 data...'
+        self.loadf0()
+        print 'f0 data loaded'
+
+    def loadf0(self):
+        ##f0 mesh data
+        self.f0_file = self.xgc_path+'xgc.f0.mesh'
+        #load velocity grid parallel velocity
+        f0_nvp = self.readCmd(self.f0_file,'f0_nvp')
+        self.nvpa = 2*f0_nvp+1 #actual # of Vparallel velocity pts (-vpamax,0,vpamax)
+        self.vpamax = self.readCmd(self.f0_file,'f0_vp_max')
+        self.vpar = np.linspace(-self.f0_vp_max,self.vpamax,self.nvpa)
+        #load velocity grid perpendicular velocity
+        f0_nmu = self.readCmd(self.f0_file,'f0_nmu')
+        self.nvpe = f0_nmu + 1 #actual # of Vperp velocity pts (0,vpemax)
+        self.vpemax = self.readCmd(self.f0_file,'f0_smu_max')
+        self.vperp = np.linspace(0,self.f0_smu_max,self.nvpe)
+        #load velocity grid density
+        self.f0_ne = self.readCmd(self.f0_file,'f0_den')
+        #load velocity grid electron and ion temperature
+        f0_t_ev = self.readCmd(self.f0_file,'f0_t_ev')
+        self.f0_Te = f0_t_ev[0,:]
+        self.f0_Ti = f0_t_ev[1,:]
+
+        self.f0_grid_vol_vonly = self.readCmd(self.f0_file,'f0_grid_vol_vonly')
+
+
