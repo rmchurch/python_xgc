@@ -321,7 +321,7 @@ class xgc1Load(_load):
         self.neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
 
         #ne = neAdiatbatic + dneKinetic
-        self.n_e = neAdiabatic + self.eden
+        self.n_e = self.neAdiabatic + self.eden
 
         #TODO I've ignored checking whether dne<<ne0, etc. may want to add
         return self.n_e

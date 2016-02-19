@@ -11,13 +11,11 @@ Zmin=-0.25
 Zmax=0.4
 phi_start=0
 phi_end=1
-t_start = 0
-t_end = 2
 
 fileDir='/global/project/projectdirs/m499/jlang/particle_pinch/'
 
 #load XGC data, and calculate normalized electron density
-loader=xgc.load(fileDir,Rmin=Rmin,Rmax=Rmax,Zmin=Zmin,Zmax=Zmax,phi_start=phi_start,phi_end=phi_end,t_start=t_start,t_end=t_end)
+loader=xgc.load(fileDir,Rmin=Rmin,Rmax=Rmax,Zmin=Zmin,Zmax=Zmax,phi_start=phi_start,phi_end=phi_end)
 
 #plot the poloidal mesh
 plt.figure(1)
