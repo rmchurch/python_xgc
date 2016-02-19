@@ -198,9 +198,9 @@ class _load(object):
     def loadEquil(self):
         """Load equilibrium profiles and compute the interpolant
         """
-        #read in 1D psin data
-        self.psin1D = self.readCmd(self.oneddiag_file,'psi')
-        if self.psin1D.ndim > 1: self.psin1D = self.psin1D[0,:]
+        #read in 1d psin data
+        self.psin1d = self.readCmd(self.oneddiag_file,'psi')
+        if self.psin1d.ndim > 1: self.psin1d = self.psin1d[0,:]
 
         #read electron temperature
         try:
@@ -209,22 +209,22 @@ class _load(object):
         except:
           etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_1d')
           etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_1d')
-        self.Te1D=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
+        self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
 
         #read electron density
-        self.ne1D = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
+        self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
 
         #read n=0,m=0 potential
         try:
-            self.psin001D = self.readCmd(self.oneddiag_file,'psi00_1d')/self.unit_dic['psi_x']
+            self.psin001d = self.readCmd(self.oneddiag_file,'psi00_1d')/self.unit_dic['psi_x']
         except:
-            self.psin001D = self.readCmd(self.oneddiag_file,'psi00')/self.unit_dic['psi_x']
-        if self.psin001D.ndim > 1: self.psin001D = self.psin001D[0,:]
-        self.pot001D = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
+            self.psin001d = self.readCmd(self.oneddiag_file,'psi00')/self.unit_dic['psi_x']
+        if self.psin001d.ndim > 1: self.psin001d = self.psin001d[0,:]
+        self.pot001d = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
         
         #create splines for t=0 data
-        self.te0_sp = splrep(self.psin1D,self.Te1D[0,:],k=1)
-        self.ne0_sp = splrep(self.psin1D,self.ne1D[0,:],k=1)
+        self.te0_sp = splrep(self.psin1d,self.Te1d[0,:],k=1)
+        self.ne0_sp = splrep(self.psin1d,self.ne1d[0,:],k=1)
 
     def loadBfield(self):
         """Load magnetic field
@@ -270,8 +270,8 @@ class xgc1Load(_load):
         print 'fluctuations loaded'
 
     def loadFluc(self):
-        """Load non-adiabatic electron density and electrical static 
-        potential fluctuations for 3D mesh.
+        """Load non-adiabatic electron density, electrical static 
+        potential fluctuations, and n=0 potential for 3D mesh.
         The required planes are calculated and stored in sorted array.
         fluctuation data on each plane is stored in the same order.
         Note that for full-F runs, the perturbed electron density 
@@ -282,12 +282,13 @@ class xgc1Load(_load):
         self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
         
         self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
         for i in range(self.t_start,self.t_end+1):
             flucFile = self.xgc_path + 'xgc.3d.'+str(i).zfill(5)
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
             self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            
+            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0')[self.rzInds]
             self.eden[:,:,i-1] = self.readCmd(flucFile,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
         
         if self.Nplanes == 1:
@@ -310,21 +311,24 @@ class xgc1Load(_load):
         # temperature and density (equilibrium) on the psi mesh
         te0 = splev(psin,self.te0_sp)
         # avoid temperature <= 0
-        te0[te0<np.min(self.Te1D)/10] = np.min(self.Te1D)/10
+        te0[te0<np.min(self.Te1d)/10] = np.min(self.Te1d)/10
         ne0 = splev(psin,self.ne0_sp)
-        ne0[ne0<np.min(self.ne1D)/10] = np.min(self.ne1D)/10
+        ne0[ne0<np.min(self.ne1d)/10] = np.min(self.ne1d)/10
         
 
         #neAdiabatic = ne0*exp(dpot/te0)
         factAdiabatic = np.exp(np.einsum('i...,i...->i...',self.dpot,1./te0))
-        neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
+        self.neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
 
         #ne = neAdiatbatic + dneKinetic
-        ne = neAdiabatic + self.eden
+        self.n_e = neAdiabatic + self.eden
 
         #TODO I've ignored checking whether dne<<ne0, etc. may want to add
-        return ne
+        return self.n_e
 
+    def calcPotential(self):
+        self.pot = self.pot0[:,np.newaxis,:] + self.dpot
+        return self.pot
 
 
 

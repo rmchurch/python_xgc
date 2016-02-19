@@ -11,22 +11,28 @@ Zmin=-0.25
 Zmax=0.4
 phi_start=0
 phi_end=1
+t_start = 0
+t_end = 2
 
 fileDir='/global/project/projectdirs/m499/jlang/particle_pinch/'
 
 #load XGC data, and calculate normalized electron density
-loader=xgc.load(fileDir,Rmin=Rmin,Rmax=Rmax,Zmin=Zmin,Zmax=Zmax,phi_start=phi_start,phi_end=phi_end)
+loader=xgc.load(fileDir,Rmin=Rmin,Rmax=Rmax,Zmin=Zmin,Zmax=Zmax,phi_start=phi_start,phi_end=phi_end,t_start=t_start,t_end=t_end)
 
 #plot the poloidal mesh
 plt.figure(1)
 plt.triplot(loader.RZ[:,0],loader.RZ[:,1],loader.tri)
 
 
-#calculate the totoal electron density, and normalize to first time frame
+#calculate the totoal electron density (this will also create potTotal so you can access it with loader.ne)
+# also normalize to first time frame
 #n_e will be size [Nverts,Nplanes,Ntimes], where Nverts is the number of 
 #poloidal plane unstructured mesh vertices, Nplanes the number of toroidal planes, and Ntimes the number of time slices
 n_e=loader.calcNeTotal()
 neNorm=np.einsum('i...j,i...->i...j',n_e,1./n_e[:,:,0])
+
+#calculate the total potential (this will also create potTotal so you can access it with loader.pot)
+pot = loader.calcPotential()
 
 #setup mesh grid
 Ri=np.linspace (loader.Rmin,loader.Rmax,400)
