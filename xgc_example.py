@@ -11,7 +11,7 @@ Zmin=-0.25
 Zmax=0.4
 phi_start=0
 phi_end=1
-t_start = 0
+t_start = 1
 t_end = 2
 
 fileDir='/global/project/projectdirs/m499/jlang/particle_pinch/'
