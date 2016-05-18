@@ -60,9 +60,10 @@ class _load(object):
         time step.
         """
         def readAdios(x,v):
-            if '/' in v: v = '/'+v
+            #if '/' in v: v = '/'+v
+            v = '/'+v
             if type(x) is adios.file:
-                return x[v][:]
+    	        return x[v][:]		
             else:
                 return adios.file(x+'.bp')[v][:]
 
@@ -206,10 +207,15 @@ class _load(object):
         try:
           etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_avg')
           etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_avg')
+          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_avg')
+          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_avg')
         except:
           etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_1d')
           etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_1d')
+          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_1d')
+          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_1d')
         self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
+        self.Ti1d=(itemp_par[self.mask1d,:]+itemp_per[self.mask1d,:])*2./3
 
         #read electron density
         self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
@@ -223,6 +229,7 @@ class _load(object):
         self.pot001d = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
         
         #create splines for t=0 data
+        self.ti0_sp = splrep(self.psin1d,self.Ti1d[0,:],k=1)
         self.te0_sp = splrep(self.psin1d,self.Te1d[0,:],k=1)
         self.ne0_sp = splrep(self.psin1d,self.ne1d[0,:],k=1)
 
