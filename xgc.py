@@ -60,8 +60,8 @@ class _load(object):
         time step.
         """
         def readAdios(x,v):
-            #if '/' in v: v = '/'+v
-            v = '/'+v
+            if '/' in v: v = '/'+v
+            #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
     	        return x[v][:]		
             else:
