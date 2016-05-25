@@ -59,16 +59,16 @@ class _load(object):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
         """
-        def readAdios(x,v):
+        def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
-    	        return x[v][:]		
+    	        return x[v][inds]		
             else:
-                return adios.file(x+'.bp')[v][:]
+                return adios.file(x+'.bp')[v][inds]
 
-        def readHDF5(x,v):
-            return h5py.File(x+'.h5','r')[v][:]
+        def readHDF5(x,v,inds=Ellipsis):
+            return h5py.File(x+'.h5','r')[v][inds]
 
         print 'Loading XGC output data'
         
@@ -156,8 +156,9 @@ class _load(object):
         psi = self.readCmd(self.mesh_file,'psi')
         psin = psi/self.unit_dic['psi_x']
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
-
-        # set limits if not user specified
+        node_vol=self.readCmd(self.mesh_file,'node_vol')
+        
+	# set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
         if self.Rmax is None: self.Rmax=np.max(R)
         if self.Zmin is None: self.Zmin=np.min(Z)
@@ -172,7 +173,8 @@ class _load(object):
 
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
-
+	self.node_vol = node_vol[self.rzInds]
+	
         # psi interpolant
         fill_ = np.nan
         if self.kind == 'linear':
@@ -237,7 +239,7 @@ class _load(object):
         """Load magnetic field
         """
 
-        self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+        self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values',inds=(self.rzInds,)+(Ellipsis,))#[self.rzInds,:]
 
     def oned_mask(self):
         """Match oned data to 3d files, in cases of restart.
@@ -294,9 +296,9 @@ class xgc1Load(_load):
         for i in range(self.t_start,self.t_end+1):
             flucFile = self.xgc_path + 'xgc.3d.'+str(i).zfill(5)
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0')[self.rzInds]
-            self.eden[:,:,i-1] = self.readCmd(flucFile,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
+            self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,)+(slice(self.phi_start,self.phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,) )#[self.rzInds]
+            self.eden[:,:,i-1] = self.readCmd(flucFile,'eden',inds=(self.rzInds,)+(slice(self.phi_start,self.phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
         
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
@@ -383,12 +385,12 @@ class xgcaLoad(_load):
         for i in range(self.t_start,self.t_end+1):
             twodFile = self.xgc_path + 'xgc.2d.'+str(i).zfill(5)
 
-            self.iden[:,i-1] = self.readCmd(flucFile,'iden')[self.rzInds]
+            self.iden[:,i-1] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
 
-            self.dpot[:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds]
-            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0')[self.rzInds]
-            self.epsi[:,i-1] = self.readCmd(flucFile,'epsi')[self.rzInds]
-            self.etheta[:,i-1] = self.readCmd(flucFile,'etheta')[self.rzInds]
+            self.dpot[:,i-1] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
+            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
+            self.epsi[:,i-1] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
+            self.etheta[:,i-1] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
             
 
         
