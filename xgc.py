@@ -497,6 +497,7 @@ class xgcaLoad(_load):
                 f0  = f['e_f'][...]
             else:
                 f0  = f['i_f'][...]
+                f0[f0<0] = 0.
 
             #calculate moments of f0 using einsum for fast(er) calculation
             den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
@@ -511,12 +512,16 @@ class xgcaLoad(_load):
                 ne2d = den2d
                 Vepar2d = Vpar2d
                 Te2d = T2d
+                Tepar2d = Tpar2d
+                Teperp2d = Tperp2d
             else:
                 ni2d = den2d
                 Vipar2d = Vpar2d
                 Ti2d = T2d
+                Tipar2d = Tpar2d
+                Tiperp2d = Tperp2d
 
-        return (ne2d,Vepar2d,Te2d,ni2d,Vipar2d,Ti2d)
+        return (ne2d,Vepar2d,Te2d,Tepar2d,Teperp2d,ni2d,Vipar2d,Ti2d,Tipar2d,Tiperp2d)
 
 
 class gengridLoad():
