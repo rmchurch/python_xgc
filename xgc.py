@@ -59,16 +59,16 @@ class _load(object):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
         """
-        def readAdios(x,v):
+        def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
-            #v = '/'+v
+            #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
-    	        return x[v][:]		
+    	        return x[v][inds]		
             else:
-                return adios.file(x+'.bp')[v][:]
+                return adios.file(x+'.bp')[v][inds]
 
-        def readHDF5(x,v):
-            return h5py.File(x+'.h5','r')[v][:]
+        def readHDF5(x,v,inds=Ellipsis):
+            return h5py.File(x+'.h5','r')[v][inds]
 
         print 'Loading XGC output data'
         
@@ -89,6 +89,10 @@ class _load(object):
         #read in units file
         self.unit_file = self.xgc_path+'units.m'
         self.unit_dic = self.load_m(self.unit_file)
+        self.unit_dic = self.load_mass(self.unit_file)
+
+        self.inputused_file = self.xgc_path+'foort.input.used'
+        self.ptl_mass = self.load_mass(self.inputused)
 
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
@@ -145,6 +149,28 @@ class _load(object):
         f.close()
         return result
 
+
+    def load_mass_charge(self,fname):
+        """load particle masses from fort.input.used (currently ptl_e_mass_au not in units.m
+        """
+        #TODO: Not general, someimtes comma on end of number
+        proton_mass = 1.6720e-27
+        e_charge = 1.6022e-19
+        ptl_mass = np.array([5.446e-4,2.0])*proton_mass
+        ptl_charge = np.array([-1.0,1.0])*e_charge
+        f = open(fname,'r')
+        result = {}
+        for line in f:
+            if 'PTL_E_MASS_AU' in line:
+                self.ptl_mass[0] = float(line.split(',')[0].split()[-1]) * proton_mass
+            if 'PTL_MASS_AU' in line:
+                self.ptl_mass[1] = float(line.split(',')[0].split()[-1]) * proton_mass
+            if 'PTL_E_CHARGE_AU' in line:
+                self.ptl_charge[0] = float(line.split(',')[0].split()[-1]) * e_charge
+            if 'PTL_CHARGE_AU' in line:
+                self.ptl_charge[1] = float(line.split(',')[0].split()[-1]) * e_charge
+            
+
     def loadMesh(self):
         """load R-Z mesh and psi values, then create map between each psi 
            value and the series of points on that surface.
@@ -156,8 +182,9 @@ class _load(object):
         psi = self.readCmd(self.mesh_file,'psi')
         psin = psi/self.unit_dic['psi_x']
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
-
-        # set limits if not user specified
+        node_vol=self.readCmd(self.mesh_file,'node_vol')
+        
+	# set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
         if self.Rmax is None: self.Rmax=np.max(R)
         if self.Zmin is None: self.Zmin=np.min(Z)
@@ -172,7 +199,8 @@ class _load(object):
 
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
-
+        self.node_vol = node_vol[self.rzInds]
+	
         # psi interpolant
         fill_ = np.nan
         if self.kind == 'linear':
@@ -296,9 +324,9 @@ class xgc1Load(_load):
         for i in range(self.t_start,self.t_end+1):
             flucFile = self.xgc_path + 'xgc.3d.'+str(i).zfill(5)
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0')[self.rzInds]
-            self.eden[:,:,i-1] = self.readCmd(flucFile,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
+            self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,)+(slice(self.phi_start,self.phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,) )#[self.rzInds]
+            self.eden[:,:,i-1] = self.readCmd(flucFile,'eden',inds=(self.rzInds,)+(slice(self.phi_start,self.phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
         
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
@@ -348,30 +376,8 @@ class xgcaLoad(_load):
         super(xgcaLoad,self).__init__(xgc_path,**kwargs)
 
         print 'Loading f0 data...'
-        self.loadf0()
+        self.loadf0mesh()
         print 'f0 data loaded'
-
-    def loadf0(self):
-        ##f0 mesh data
-        self.f0_file = self.xgc_path+'xgc.f0.mesh'
-        #load velocity grid parallel velocity
-        f0_nvp = self.readCmd(self.f0_file,'f0_nvp')
-        self.nvpa = 2*f0_nvp+1 #actual # of Vparallel velocity pts (-vpamax,0,vpamax)
-        self.vpamax = self.readCmd(self.f0_file,'f0_vp_max')
-        self.vpar = np.linspace(-self.f0_vp_max,self.vpamax,self.nvpa)
-        #load velocity grid perpendicular velocity
-        f0_nmu = self.readCmd(self.f0_file,'f0_nmu')
-        self.nvpe = f0_nmu + 1 #actual # of Vperp velocity pts (0,vpemax)
-        self.vpemax = self.readCmd(self.f0_file,'f0_smu_max')
-        self.vperp = np.linspace(0,self.f0_smu_max,self.nvpe)
-        #load velocity grid density
-        self.f0_ne = self.readCmd(self.f0_file,'f0_den')
-        #load velocity grid electron and ion temperature
-        f0_t_ev = self.readCmd(self.f0_file,'f0_t_ev')
-        self.f0_Te = f0_t_ev[0,:]
-        self.f0_Ti = f0_t_ev[1,:]
-
-        self.f0_grid_vol_vonly = self.readCmd(self.f0_file,'f0_grid_vol_vonly')
 
     def load2D():
         self.iden = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
@@ -385,15 +391,139 @@ class xgcaLoad(_load):
         for i in range(self.t_start,self.t_end+1):
             twodFile = self.xgc_path + 'xgc.2d.'+str(i).zfill(5)
 
-            self.iden[:,i-1] = self.readCmd(flucFile,'iden')[self.rzInds]
+            self.iden[:,i-1] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
 
-            self.dpot[:,i-1] = self.readCmd(flucFile,'dpot')[self.rzInds]
-            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0')[self.rzInds]
-            self.epsi[:,i-1] = self.readCmd(flucFile,'epsi')[self.rzInds]
-            self.etheta[:,i-1] = self.readCmd(flucFile,'etheta')[self.rzInds]
+            self.dpot[:,i-1] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
+            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
+            self.epsi[:,i-1] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
+            self.etheta[:,i-1] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
+
+
+    def loadf0mesh(self):
+        ##f0 mesh data
+        self.f0mesh_file = self.xgc_path+'xgc.f0.mesh'
+        #load velocity grid parallel velocity
+        f0_nvp = self.readCmd(self.f0mesh_file,'f0_nvp')
+        self.nvpa = 2*f0_nvp+1 #actual # of Vparallel velocity pts (-vpamax,0,vpamax)
+        self.vpamax = self.readCmd(self.f0_file,'f0_vp_max')
+        #load velocity grid perpendicular velocity
+        f0_nmu = self.readCmd(self.f0_file,'f0_nmu')
+        self.nvpe = f0_nmu + 1 #actual # of Vperp velocity pts (0,vpemax)
+        self.vpemax = self.readCmd(self.f0_file,'f0_smu_max')
+        self.vpa, self.vpe, self.vpe1 = create_vpa_vpe_grid(f0_nvp,f0_nmu,self.vpamax,self.vpemax)
+        #load velocity grid density
+        self.f0_ne = self.readCmd(self.f0_file,'f0_den')
+        #load velocity grid electron and ion temperature
+        f0_t_ev = self.readCmd(self.f0_file,'f0_t_ev')
+        self.f0_Te = f0_t_ev[0,:]
+        self.f0_Ti = f0_t_ev[1,:]
+
+        self.f0_grid_vol_vonly = self.readCmd(self.f0_file,'f0_grid_vol_vonly')
+
+
+    def create_vpa_vpe_grid(f0_nvp, f0_nmu, f0_vp_max, f0_smu_max):
+        """Create velocity grid vectors"""
+        vpe=np.linspace(0,f0_smu_max,f0_nmu+1) #dindgen(nvpe+1)/(nvpe)*vpemax
+        vpe1=vpe.copy()
+        vpe1[0]=vpe[1]/3.
+        vpa=np.linspace(-f0_vp_max,f0_vp_max,2*f0_nvp+1)
+        return (vpa, vpe, vpe1)
+
             
+    ######## ANALYSIS ###################################################################
+    def calcMoments(self):
+        """Calculate moments from the f0 data
+        """
+        #discrete cell correction
+        volfac = np.ones((self.vpe.size,self.vpa.size))
+        volfac[0,:]=0.5 #0.5 for where ivpe==0
 
-        
+        for isp in range(2):
+            # Extract species of interest (0 ions, 1 electrons)
+            mass = self.ptl_mass[isp]
+            charge = self.ptl_charge[isp]
+
+            vspace_vol = self.f0_grid_vol_vonly[isp,:]
+            Tev = mesh.f0_T_ev[isp,:]
+            vth=np.sqrt(np.abs(charge)*Tev/mass)
+
+            #read distribution data
+            if not isp:
+                f0  = self.readCmd(self.f0_file,'e_f',inds=(self.rzInds,))
+            else:
+                f0  = self.readCmd(self.f0_file,'i_f',inds=(self.rzInds,))
+
+            #calculate moments of f0 using einsum for fast(er) calculation
+            den2d = np.einsum('ijkl,il->jk',f0,volfac)*vspace_vol
+            Vpar2d = vth*np.einsum('i,ijkl,il->jk',vpa,f0,volfac)*vspace_vol/den2d
+
+            prefac = mass*vth**2./(2.*np.abs(charge))
+            Tpar2d = 2.*prefac*( vth**2.*np.einsum('i,ijkl,il->jk',vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
+            Tperp2d = prefac*vth**2.*np.einsum('l,ijkl,il->jk',vpe**2.,f0,volfac)*vspace_vol/den2d
+            T2d = (Tpar2d + 2.*Tperp2d)/3.
+
+            if not isp:
+                self.ne2d = den2d
+                self.Vepar2d = Vpar2d
+                self.Te2d = T2d
+            else:
+                self.ni2d = den2d
+                self.Vipar2d = Vpar2d
+                self.Ti2d = T2d
+            #TODO: Add calculation for fluxes, Vpol (requires more info)
+
+        return (self.ne2d,self.Vepar2d,self.Te2d,self.Tepar3d,self.Teperp3d,\
+                self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar3d,self.Tiperp3d)
+
+
+
+    def calcMoments(ind):
+        """Calculate moments from the f0 data
+        """
+        #discrete cell correction
+        volfac = np.ones((vpe.size,vpa.size))
+        volfac[0,:]=0.5 #0.5 for where ivpe==0
+
+        for isp in range(2):
+            # Extract species of interest (0 electrons, 1 ions)
+            mass = ptl_mass[isp]
+            charge = ptl_charge[isp]
+
+            vspace_vol = f0_grid_vol_vonly[isp,:]
+            Tev = f0_T_ev[isp,:]
+            vth=np.sqrt(np.abs(charge)*Tev/mass)
+
+            #read distribution data
+            f = ad.file('xgc.f0.'+str(ind).zfill(5)+'.bp')
+            if not isp:
+                f0  = f['e_f'][...]
+            else:
+                f0  = f['i_f'][...]
+                f0[f0<0] = 0.
+
+            #calculate moments of f0 using einsum for fast(er) calculation
+            den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
+            Vpar2d = vth*np.einsum('k,ijk,ik->j',vpa,f0,volfac)*vspace_vol/den2d
+
+            prefac = mass/(2.*np.abs(charge))
+            Tpar2d = 2.*prefac*( vth**2.*np.einsum('k,ijk,ik->j',vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
+            Tperp2d = prefac*vth**2.*np.einsum('i,ijk,ik->j',vpe**2.,f0,volfac)*vspace_vol/den2d
+            T2d = (Tpar2d + 2.*Tperp2d)/3.
+
+            if not isp:
+                ne2d = den2d
+                Vepar2d = Vpar2d
+                Te2d = T2d
+                Tepar2d = Tpar2d
+                Teperp2d = Tperp2d
+            else:
+                ni2d = den2d
+                Vipar2d = Vpar2d
+                Ti2d = T2d
+                Tipar2d = Tpar2d
+                Tiperp2d = Tperp2d
+
+        return (ne2d,Vepar2d,Te2d,Tepar2d,Teperp2d,ni2d,Vipar2d,Ti2d,Tipar2d,Tiperp2d)
 
 
 class gengridLoad():
