@@ -60,8 +60,8 @@ class _load(object):
         time step.
         """
         def readAdios(x,v):
-            #if '/' in v: v = '/'+v
-            v = '/'+v
+            if '/' in v: v = '/'+v
+            #v = '/'+v
             if type(x) is adios.file:
     	        return x[v][:]		
             else:
@@ -236,8 +236,10 @@ class _load(object):
     def loadBfield(self):
         """Load magnetic field
         """
-
-        self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+	try:
+        	self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+        except:
+		self.bfield = self.readCmd(self.bfield_file,'bfield')[self.rzInds,:]
 
     def oned_mask(self):
         """Match oned data to 3d files, in cases of restart.
