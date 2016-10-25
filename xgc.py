@@ -89,10 +89,9 @@ class _load(object):
         #read in units file
         self.unit_file = self.xgc_path+'units.m'
         self.unit_dic = self.load_m(self.unit_file)
-        self.unit_dic = self.load_mass(self.unit_file)
 
-        self.inputused_file = self.xgc_path+'foort.input.used'
-        self.ptl_mass = self.load_mass(self.inputused)
+        self.inputused_file = self.xgc_path+'fort.input.used'
+        self.ptl_mass,self.ptl_charge = self.load_mass_charge(self.inputused_file)
 
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
@@ -162,14 +161,14 @@ class _load(object):
         result = {}
         for line in f:
             if 'PTL_E_MASS_AU' in line:
-                self.ptl_mass[0] = float(line.split(',')[0].split()[-1]) * proton_mass
+                ptl_mass[0] = float(line.split('PTL_E_MASS_AU=')[1].split(',')[0]) * proton_mass
             if 'PTL_MASS_AU' in line:
-                self.ptl_mass[1] = float(line.split(',')[0].split()[-1]) * proton_mass
+                ptl_mass[1] = float(line.split('PTL_MASS_AU=')[1].split(',')[0]) * proton_mass
             if 'PTL_E_CHARGE_AU' in line:
-                self.ptl_charge[0] = float(line.split(',')[0].split()[-1]) * e_charge
+                ptl_charge[0] = float(line.split('PTL_E_CHARGE_AU=')[1].split(',')[0]) * e_charge
             if 'PTL_CHARGE_AU' in line:
-                self.ptl_charge[1] = float(line.split(',')[0].split()[-1]) * e_charge
-            
+                ptl_charge[1] = float(line.split('PTL_CHARGE_AU')[1].split(',')[0]) * e_charge
+        return ptl_mass,ptl_charge
 
     def loadMesh(self):
         """load R-Z mesh and psi values, then create map between each psi 
@@ -405,23 +404,23 @@ class xgcaLoad(_load):
         #load velocity grid parallel velocity
         f0_nvp = self.readCmd(self.f0mesh_file,'f0_nvp')
         self.nvpa = 2*f0_nvp+1 #actual # of Vparallel velocity pts (-vpamax,0,vpamax)
-        self.vpamax = self.readCmd(self.f0_file,'f0_vp_max')
+        self.vpamax = self.readCmd(self.f0mesh_file,'f0_vp_max')
         #load velocity grid perpendicular velocity
-        f0_nmu = self.readCmd(self.f0_file,'f0_nmu')
+        f0_nmu = self.readCmd(self.f0mesh_file,'f0_nmu')
         self.nvpe = f0_nmu + 1 #actual # of Vperp velocity pts (0,vpemax)
-        self.vpemax = self.readCmd(self.f0_file,'f0_smu_max')
-        self.vpa, self.vpe, self.vpe1 = create_vpa_vpe_grid(f0_nvp,f0_nmu,self.vpamax,self.vpemax)
+        self.vpemax = self.readCmd(self.f0mesh_file,'f0_smu_max')
+        self.vpa, self.vpe, self.vpe1 = self.create_vpa_vpe_grid(f0_nvp,f0_nmu,self.vpamax,self.vpemax)
         #load velocity grid density
-        self.f0_ne = self.readCmd(self.f0_file,'f0_den')
+        self.f0_ne = self.readCmd(self.f0mesh_file,'f0_den')
         #load velocity grid electron and ion temperature
-        f0_t_ev = self.readCmd(self.f0_file,'f0_t_ev')
+        f0_t_ev = self.readCmd(self.f0mesh_file,'f0_T_ev')
         self.f0_Te = f0_t_ev[0,:]
         self.f0_Ti = f0_t_ev[1,:]
 
-        self.f0_grid_vol_vonly = self.readCmd(self.f0_file,'f0_grid_vol_vonly')
+        self.f0_grid_vol_vonly = self.readCmd(self.f0mesh_file,'f0_grid_vol_vonly')
 
 
-    def create_vpa_vpe_grid(f0_nvp, f0_nmu, f0_vp_max, f0_smu_max):
+    def create_vpa_vpe_grid(self,f0_nvp, f0_nmu, f0_vp_max, f0_smu_max):
         """Create velocity grid vectors"""
         vpe=np.linspace(0,f0_smu_max,f0_nmu+1) #dindgen(nvpe+1)/(nvpe)*vpemax
         vpe1=vpe.copy()
