@@ -281,8 +281,10 @@ class _load(object):
     def loadBfield(self):
         """Load magnetic field
         """
-
-        self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values',inds=(self.rzInds,)+(Ellipsis,))#[self.rzInds,:]
+	try:
+        	self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+        except:
+		self.bfield = self.readCmd(self.bfield_file,'bfield')[self.rzInds,:]
 
     def oned_mask(self):
         """Match oned data to 3d files, in cases of restart.
@@ -420,23 +422,23 @@ class xgcaLoad(_load):
         #load velocity grid parallel velocity
         f0_nvp = self.readCmd(self.f0mesh_file,'f0_nvp')
         self.nvpa = 2*f0_nvp+1 #actual # of Vparallel velocity pts (-vpamax,0,vpamax)
-        self.vpamax = self.readCmd(self.f0_file,'f0_vp_max')
+        self.vpamax = self.readCmd(self.f0mesh_file,'f0_vp_max')
         #load velocity grid perpendicular velocity
-        f0_nmu = self.readCmd(self.f0_file,'f0_nmu')
+        f0_nmu = self.readCmd(self.f0mesh_file,'f0_nmu')
         self.nvpe = f0_nmu + 1 #actual # of Vperp velocity pts (0,vpemax)
-        self.vpemax = self.readCmd(self.f0_file,'f0_smu_max')
-        self.vpa, self.vpe, self.vpe1 = create_vpa_vpe_grid(f0_nvp,f0_nmu,self.vpamax,self.vpemax)
+        self.vpemax = self.readCmd(self.f0mesh_file,'f0_smu_max')
+        self.vpa, self.vpe, self.vpe1 = self.create_vpa_vpe_grid(f0_nvp,f0_nmu,self.vpamax,self.vpemax)
         #load velocity grid density
-        self.f0_ne = self.readCmd(self.f0_file,'f0_den')
+        self.f0_ne = self.readCmd(self.f0mesh_file,'f0_den')
         #load velocity grid electron and ion temperature
-        f0_t_ev = self.readCmd(self.f0_file,'f0_t_ev')
+        f0_t_ev = self.readCmd(self.f0mesh_file,'f0_T_ev')
         self.f0_Te = f0_t_ev[0,:]
         self.f0_Ti = f0_t_ev[1,:]
 
-        self.f0_grid_vol_vonly = self.readCmd(self.f0_file,'f0_grid_vol_vonly')
+        self.f0_grid_vol_vonly = self.readCmd(self.f0mesh_file,'f0_grid_vol_vonly')
 
 
-    def create_vpa_vpe_grid(f0_nvp, f0_nmu, f0_vp_max, f0_smu_max):
+    def create_vpa_vpe_grid(self,f0_nvp, f0_nmu, f0_vp_max, f0_smu_max):
         """Create velocity grid vectors"""
         vpe=np.linspace(0,f0_smu_max,f0_nmu+1) #dindgen(nvpe+1)/(nvpe)*vpemax
         vpe1=vpe.copy()
