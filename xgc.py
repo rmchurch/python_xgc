@@ -89,10 +89,9 @@ class _load(object):
         #read in units file
         self.unit_file = self.xgc_path+'units.m'
         self.unit_dic = self.load_m(self.unit_file)
-        self.unit_dic = self.load_mass(self.unit_file)
 
-        self.inputused_file = self.xgc_path+'foort.input.used'
-        self.ptl_mass = self.load_mass(self.inputused)
+        self.inputused_file = self.xgc_path+'fort.input.used'
+        self.load_mass_charge(self.inputused_file)
 
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
@@ -126,6 +125,19 @@ class _load(object):
         print 'Loading mesh and psi...'
         self.loadMesh()
         print '\tmesh and psi loaded.'
+
+        #TODO: This isnt right yet, need to instead find saddlepoint
+        #could do using gradient in LinearTriinterpolator or Cubic 
+        #some units.m dont have eq_x_r,eq_x_z, approximate
+        # if not ('eq_x_z' in self.unit_dic):
+        #     import matplotlib._tri as _tri
+        #     from matplotlib.tri import Triangulation
+        #     triObj = Triangulation(self.RZ[:,0],self.RZ[:,1],self.tri)
+        #     C = _tri.TriContourGenerator(triObj.get_cpp_triangulation(),self.psin)
+        #     RZsep = C.create_contour(1.0)[0]
+        #     xind = np.argmin(RZsep[:,1])
+        #     self.unit_dic['eq_x_r'] = RZsep[xind,0]
+        #     self.unit_dic['eq_x_z'] = RZsep[xind,1]
         
         print 'Loading magnetics...'
         self.loadBfield()
@@ -134,6 +146,8 @@ class _load(object):
         print 'Loading equilibrium...'
         self.loadEquil()
         print '\tequlibrium loaded.'
+
+
 
     
     def load_m(self,fname):
@@ -158,18 +172,21 @@ class _load(object):
         e_charge = 1.6022e-19
         ptl_mass = np.array([5.446e-4,2.0])*proton_mass
         ptl_charge = np.array([-1.0,1.0])*e_charge
-        f = open(fname,'r')
-        result = {}
-        for line in f:
-            if 'PTL_E_MASS_AU' in line:
-                self.ptl_mass[0] = float(line.split(',')[0].split()[-1]) * proton_mass
-            if 'PTL_MASS_AU' in line:
-                self.ptl_mass[1] = float(line.split(',')[0].split()[-1]) * proton_mass
-            if 'PTL_E_CHARGE_AU' in line:
-                self.ptl_charge[0] = float(line.split(',')[0].split()[-1]) * e_charge
-            if 'PTL_CHARGE_AU' in line:
-                self.ptl_charge[1] = float(line.split(',')[0].split()[-1]) * e_charge
-            
+        try:
+            f = open(fname,'r')
+            result = {}
+            for line in f:
+                if 'PTL_E_MASS_AU' in line:
+                    self.ptl_mass[0] = float(line.split(',')[0].split()[-1]) * proton_mass
+                if 'PTL_MASS_AU' in line:
+                    self.ptl_mass[1] = float(line.split(',')[0].split()[-1]) * proton_mass
+                if 'PTL_E_CHARGE_AU' in line:
+                    self.ptl_charge[0] = float(line.split(',')[0].split()[-1]) * e_charge
+                if 'PTL_CHARGE_AU' in line:
+                    self.ptl_charge[1] = float(line.split(',')[0].split()[-1]) * e_charge
+        except:
+            pass            
+        return ptl_mass,ptl_charge#will return default values
 
     def loadMesh(self):
         """load R-Z mesh and psi values, then create map between each psi 
