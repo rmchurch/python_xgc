@@ -54,7 +54,8 @@ class _load(object):
 
     def __init__(self,xgc_path,t_start=1,t_end=None,dt=1,
         Rmin=None,Rmax=None,Zmin=None,Zmax=None,
-        psinMin=None,psinMax=None,phi_start=0, phi_end=None,
+        psinMin=None,psinMax=None,thetaMin=None,thetaMax=None, 
+	phi_start=0, phi_end=None,
         kind='linear'):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
@@ -65,7 +66,10 @@ class _load(object):
             if type(x) is adios.file:
                 return x[v][...][inds]       
             else:
-                return adios.file(x+'.bp')[v][...][inds]
+                f = adios.file(x+'.bp')
+		        data = f[v][inds]
+        		f.close()
+		        return data
 
         def readHDF5(x,v,inds=Ellipsis):
             return h5py.File(x+'.h5','r')[v][inds]
@@ -118,13 +122,29 @@ class _load(object):
         self.psinMin=psinMin
         self.psinMax=psinMax
 
-        self.kind = kind
+        self.thetaMin=thetaMin
+        self.thetaMax=thetaMax
+        
+	self.kind = kind
         
         
         #read in mesh, equilibrium data, and finally fluctuation data
         print 'Loading mesh and psi...'
         self.loadMesh()
         print '\tmesh and psi loaded.'
+
+        #TODO: This isnt right yet, need to instead find saddlepoint
+        #could do using gradient in LinearTriinterpolator or Cubic 
+        #some units.m dont have eq_x_r,eq_x_z, approximate
+        # if not ('eq_x_z' in self.unit_dic):
+        #     import matplotlib._tri as _tri
+        #     from matplotlib.tri import Triangulation
+        #     triObj = Triangulation(self.RZ[:,0],self.RZ[:,1],self.tri)
+        #     C = _tri.TriContourGenerator(triObj.get_cpp_triangulation(),self.psin)
+        #     RZsep = C.create_contour(1.0)[0]
+        #     xind = np.argmin(RZsep[:,1])
+        #     self.unit_dic['eq_x_r'] = RZsep[xind,0]
+        #     self.unit_dic['eq_x_z'] = RZsep[xind,1]
         
         print 'Loading magnetics...'
         self.loadBfield()
@@ -133,6 +153,8 @@ class _load(object):
         print 'Loading equilibrium...'
         self.loadEquil()
         print '\tequlibrium loaded.'
+
+
 
     
     def load_m(self,fname):
@@ -162,16 +184,16 @@ class _load(object):
             result = {}
             for line in f:
                 if 'PTL_E_MASS_AU' in line:
-                    ptl_mass[0] = float(line.split('PTL_E_MASS_AU=')[1].split(',')[0]) * proton_mass
+                    ptl_mass[0] = float(line.split(',')[0].split()[-1]) * proton_mass
                 if 'PTL_MASS_AU' in line:
-                    ptl_mass[1] = float(line.split('PTL_MASS_AU=')[1].split(',')[0]) * proton_mass
+                    ptl_mass[1] = float(line.split(',')[0].split()[-1]) * proton_mass
                 if 'PTL_E_CHARGE_AU' in line:
-                    ptl_charge[0] = float(line.split('PTL_E_CHARGE_AU=')[1].split(',')[0]) * e_charge
+                    ptl_charge[0] = float(line.split(',')[0].split()[-1]) * e_charge
                 if 'PTL_CHARGE_AU' in line:
-                    ptl_charge[1] = float(line.split('PTL_CHARGE_AU')[1].split(',')[0]) * e_charge
+                    ptl_charge[1] = float(line.split(',')[0].split()[-1]) * e_charge
         except:
-            pass
-        return ptl_mass,ptl_charge
+            pass            
+        return ptl_mass,ptl_charge#will return default values
 
     def loadMesh(self):
         """load R-Z mesh and psi values, then create map between each psi 
@@ -185,25 +207,30 @@ class _load(object):
         psin = psi/self.unit_dic['psi_x']
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
-        
-    # set limits if not user specified
+	    theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
+	
+	    # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
         if self.Rmax is None: self.Rmax=np.max(R)
         if self.Zmin is None: self.Zmin=np.min(Z)
         if self.Zmax is None: self.Zmax=np.max(Z)
         if self.psinMin is None: self.psinMin=np.min(psin)
         if self.psinMax is None: self.psinMax=np.max(psin)
+        if self.thetaMin is None: self.thetaMin=np.min(theta)
+        if self.thetaMax is None: self.thetaMax=np.max(theta)
 
         #limit to the user-input ranges        
         self.rzInds = ( (R>=self.Rmin) & (R<=self.Rmax) & 
             (Z>=self.Zmin) & (Z<=self.Zmax) & 
-            (psin>=self.psinMin) & (psin<=self.psinMax) )
+            (psin>=self.psinMin) & (psin<=self.psinMax) &
+            (theta>=self.thetaMin) & (theta<=self.thetaMax) )
 
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
-        self.node_vol = node_vol[self.rzInds]
-    
-        # psi interpolant
+	    self.node_vol = node_vol[self.rzInds]
+    	self.theta = theta[self.rzInds]
+        
+	    # psi interpolant
         fill_ = np.nan
         if self.kind == 'linear':
             self.psi_interp = LinearNDInterpolator(
@@ -321,22 +348,57 @@ class xgc1Load(_load):
         this loading method doesn't differentiate them and will read all of them.
         
         """
-        self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        import adios
+        from read_fluc_single import read_fluc_single 
         
+        self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
         self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
         self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
-        for i in range(self.t_start,self.t_end+1):
-            flucFile = self.xgc_path + 'xgc.3d.'+str(i).zfill(5)
-            sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            self.dpot[:,:,i-1] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,)+(slice(self.phi_start,self.phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,) )#[self.rzInds]
-            self.eden[:,:,i-1] = self.readCmd(flucFile,'eden',inds=(self.rzInds,)+(slice(self.phi_start,self.phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
+        #    import adios
+        #    flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5))
+        #    dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
+        #    pot01 = flucFile['pot0'][rzInds]
+        #    eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
+	#    return i,dpot1,pot01,eden1
+       
+         
+        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
+        #    import adios
+        #    flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5))
+        #    dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+        #    pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
+        #    eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
         
+        #try:
+        #import ipyparallel as ipp
+
+        #rc = ipp.Client()
+
+        #dview = rc[:] #load balanced view cant be used because I need to push data
+        #dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
+        #with dview.sync_imports():
+        #    import adios
+        #    import h5py
+        #    import time
+        #    from read_fluc_single import read_fluc_single 
+        #dview.push(dict(xgc_path=self.xgc_path,rzInds=self.rzInds,phi_start=self.phi_start,phi_end=self.phi_end))
+        #from read_fluc_single import read_fluc_single 
+        #out = dview.map_sync(lambda i: read_fluc_single(i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
+        
+        #for i in range(self.t_start,self.t_end+1):
+        #    _,dpot[:,:,i-1],pot0[:,i-1],eden[:,:,i-1] = out[i]
+            
+        #except:    
+        for i in range(self.t_start,self.t_end+1):
+            sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+            _,self.dpot[:,:,i-1],self.pot0[:,i-1],self.eden[:,:,i-1] = read_fluc_single(i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+            
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
             self.eden = self.eden.squeeze()
-
+        
 
     def calcNeTotal(self,psin=None):
         """Calculate the total electron at the wanted points.
