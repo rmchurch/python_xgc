@@ -63,9 +63,9 @@ class _load(object):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
-    	        return x[v][inds]		
+                return x[v][...][inds]       
             else:
-                return adios.file(x+'.bp')[v][inds]
+                return adios.file(x+'.bp')[v][...][inds]
 
         def readHDF5(x,v,inds=Ellipsis):
             return h5py.File(x+'.h5','r')[v][inds]
@@ -157,17 +157,20 @@ class _load(object):
         e_charge = 1.6022e-19
         ptl_mass = np.array([5.446e-4,2.0])*proton_mass
         ptl_charge = np.array([-1.0,1.0])*e_charge
-        f = open(fname,'r')
-        result = {}
-        for line in f:
-            if 'PTL_E_MASS_AU' in line:
-                ptl_mass[0] = float(line.split('PTL_E_MASS_AU=')[1].split(',')[0]) * proton_mass
-            if 'PTL_MASS_AU' in line:
-                ptl_mass[1] = float(line.split('PTL_MASS_AU=')[1].split(',')[0]) * proton_mass
-            if 'PTL_E_CHARGE_AU' in line:
-                ptl_charge[0] = float(line.split('PTL_E_CHARGE_AU=')[1].split(',')[0]) * e_charge
-            if 'PTL_CHARGE_AU' in line:
-                ptl_charge[1] = float(line.split('PTL_CHARGE_AU')[1].split(',')[0]) * e_charge
+        try:
+            f = open(fname,'r')
+            result = {}
+            for line in f:
+                if 'PTL_E_MASS_AU' in line:
+                    ptl_mass[0] = float(line.split('PTL_E_MASS_AU=')[1].split(',')[0]) * proton_mass
+                if 'PTL_MASS_AU' in line:
+                    ptl_mass[1] = float(line.split('PTL_MASS_AU=')[1].split(',')[0]) * proton_mass
+                if 'PTL_E_CHARGE_AU' in line:
+                    ptl_charge[0] = float(line.split('PTL_E_CHARGE_AU=')[1].split(',')[0]) * e_charge
+                if 'PTL_CHARGE_AU' in line:
+                    ptl_charge[1] = float(line.split('PTL_CHARGE_AU')[1].split(',')[0]) * e_charge
+        except:
+            pass
         return ptl_mass,ptl_charge
 
     def loadMesh(self):
@@ -183,7 +186,7 @@ class _load(object):
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
         
-	# set limits if not user specified
+    # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
         if self.Rmax is None: self.Rmax=np.max(R)
         if self.Zmin is None: self.Zmin=np.min(Z)
@@ -199,7 +202,7 @@ class _load(object):
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
         self.node_vol = node_vol[self.rzInds]
-	
+    
         # psi interpolant
         fill_ = np.nan
         if self.kind == 'linear':
@@ -214,13 +217,16 @@ class _load(object):
         #get the triangles which are all contained within the vertices defined by
         #the indexes igrid
         #find which triangles are in the defined spatial region
-        tmp=self.rzInds[tri] #rzInds T/F array, same size as R
-        goodTri=np.all(tmp,axis=1) #only use triangles who have all vertices in rzInds
-        self.tri=tri[goodTri,:]
-        #remap indices in triangulation
-        indices=np.where(self.rzInds)[0]
-        for i in range(len(indices)):
-            self.tri[self.tri==indices[i]]=i
+        if np.sum(self.rzInds)<R.size:
+            tmp=self.rzInds[tri] #rzInds T/F array, same size as R
+            goodTri=np.all(tmp,axis=1) #only use triangles who have all vertices in rzInds
+            self.tri=tri[goodTri,:]
+            #remap indices in triangulation
+            indices=np.where(self.rzInds)[0]
+            for i in range(len(indices)):
+                self.tri[self.tri==indices[i]]=i
+        else:
+            self.tri = tri
 
 
     def loadEquil(self):
@@ -263,10 +269,10 @@ class _load(object):
     def loadBfield(self):
         """Load magnetic field
         """
-	try:
-        	self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+        try:
+            self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
         except:
-		self.bfield = self.readCmd(self.bfield_file,'bfield')[self.rzInds,:]
+            self.bfield = self.readCmd(self.bfield_file,'bfield')[self.rzInds,:]
 
     def oned_mask(self):
         """Match oned data to 3d files, in cases of restart.
@@ -413,9 +419,9 @@ class xgcaLoad(_load):
         #load velocity grid density
         self.f0_ne = self.readCmd(self.f0mesh_file,'f0_den')
         #load velocity grid electron and ion temperature
-        f0_t_ev = self.readCmd(self.f0mesh_file,'f0_T_ev')
-        self.f0_Te = f0_t_ev[0,:]
-        self.f0_Ti = f0_t_ev[1,:]
+        self.f0_T_ev = self.readCmd(self.f0mesh_file,'f0_T_ev')
+        self.f0_Te = self.f0_T_ev[0,:]
+        self.f0_Ti = self.f0_T_ev[1,:]
 
         self.f0_grid_vol_vonly = self.readCmd(self.f0mesh_file,'f0_grid_vol_vonly')
 
@@ -430,53 +436,59 @@ class xgcaLoad(_load):
 
             
     ######## ANALYSIS ###################################################################
-    def calcMoments(self):
+    def calcMoments(self,ind=1):
         """Calculate moments from the f0 data
         """
+
+        self.f0_file = self.xgc_path + 'xgc.f0.'+str(ind).zfill(5)
         #discrete cell correction
         volfac = np.ones((self.vpe.size,self.vpa.size))
         volfac[0,:]=0.5 #0.5 for where ivpe==0
 
         for isp in range(2):
-            # Extract species of interest (0 ions, 1 electrons)
+            # Extract species of interest (0 electronw, 1 ions)
             mass = self.ptl_mass[isp]
             charge = self.ptl_charge[isp]
 
             vspace_vol = self.f0_grid_vol_vonly[isp,:]
-            Tev = mesh.f0_T_ev[isp,:]
+            Tev = self.f0_T_ev[isp,:]
             vth=np.sqrt(np.abs(charge)*Tev/mass)
 
             #read distribution data
             if not isp:
-                f0  = self.readCmd(self.f0_file,'e_f',inds=(self.rzInds,))
+                f0  = self.readCmd(self.f0_file,'e_f')[:,self.rzInds,:]
             else:
-                f0  = self.readCmd(self.f0_file,'i_f',inds=(self.rzInds,))
+                f0  = self.readCmd(self.f0_file,'i_f')[:,self.rzInds,:]
 
             #calculate moments of f0 using einsum for fast(er) calculation
-            den2d = np.einsum('ijkl,il->jk',f0,volfac)*vspace_vol
-            Vpar2d = vth*np.einsum('i,ijkl,il->jk',vpa,f0,volfac)*vspace_vol/den2d
+            den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
+            Vpar2d = vth*np.einsum('k,ijk,ik->j',self.vpa,f0,volfac)*vspace_vol/den2d
 
             prefac = mass*vth**2./(2.*np.abs(charge))
-            Tpar2d = 2.*prefac*( vth**2.*np.einsum('i,ijkl,il->jk',vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
-            Tperp2d = prefac*vth**2.*np.einsum('l,ijkl,il->jk',vpe**2.,f0,volfac)*vspace_vol/den2d
+            Tpar2d = 2.*prefac*(np.einsum('k,ijk,ik->j',self.vpa**2.,f0,volfac)*vspace_vol/den2d - (Vpar2d/vth)**2.)
+            Tperp2d = prefac*np.einsum('i,ijk,ik->j',self.vpe**2.,f0,volfac)*vspace_vol/den2d
             T2d = (Tpar2d + 2.*Tperp2d)/3.
-
+          	
             if not isp:
                 self.ne2d = den2d
                 self.Vepar2d = Vpar2d
                 self.Te2d = T2d
+		self.Tepar2d = Tpar2d
+		self.Teperp2d = Tperp2d
             else:
                 self.ni2d = den2d
                 self.Vipar2d = Vpar2d
                 self.Ti2d = T2d
+		self.Tipar2d = Tpar2d
+		self.Tiperp2d = Tperp2d
             #TODO: Add calculation for fluxes, Vpol (requires more info)
 
-        return (self.ne2d,self.Vepar2d,self.Te2d,self.Tepar3d,self.Teperp3d,\
-                self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar3d,self.Tiperp3d)
+        return (self.ne2d,self.Vepar2d,self.Te2d,self.Tepar2d,self.Teperp2d,\
+                self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar2d,self.Tiperp2d)
 
 
 
-    def calcMoments(ind):
+    def calcMoments1(ind):
         """Calculate moments from the f0 data
         """
         #discrete cell correction
