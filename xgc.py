@@ -67,9 +67,9 @@ class _load(object):
                 return x[v][...][inds]       
             else:
                 f = adios.file(x+'.bp')
-		        data = f[v][inds]
-        		f.close()
-		        return data
+	        data = f[v][inds]
+       		f.close()
+	        return data
 
         def readHDF5(x,v,inds=Ellipsis):
             return h5py.File(x+'.h5','r')[v][inds]
@@ -207,7 +207,7 @@ class _load(object):
         psin = psi/self.unit_dic['psi_x']
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
-	    theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
+	theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
 	
 	    # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
@@ -227,7 +227,7 @@ class _load(object):
 
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
-	    self.node_vol = node_vol[self.rzInds]
+	self.node_vol = node_vol[self.rzInds]
     	self.theta = theta[self.rzInds]
         
 	    # psi interpolant
@@ -263,23 +263,6 @@ class _load(object):
         self.psin1d = self.readCmd(self.oneddiag_file,'psi')
         if self.psin1d.ndim > 1: self.psin1d = self.psin1d[0,:]
 
-        #read electron temperature
-        try:
-          etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_avg')
-          etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_avg')
-          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_avg')
-          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_avg')
-        except:
-          etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_1d')
-          etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_1d')
-          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_1d')
-          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_1d')
-        self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
-        self.Ti1d=(itemp_par[self.mask1d,:]+itemp_per[self.mask1d,:])*2./3
-
-        #read electron density
-        self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
-
         #read n=0,m=0 potential
         try:
             self.psin001d = self.readCmd(self.oneddiag_file,'psi00_1d')/self.unit_dic['psi_x']
@@ -288,6 +271,35 @@ class _load(object):
         if self.psin001d.ndim > 1: self.psin001d = self.psin001d[0,:]
         self.pot001d = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
         
+        #read electron temperature
+	try:
+          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_avg')
+          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_avg')
+	except:
+          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_1d')
+          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_1d')
+        self.Ti1d=(itemp_par[self.mask1d,:]+itemp_per[self.mask1d,:])*2./3
+        
+	try:
+          etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_avg')
+          etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_avg')
+          self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
+          #read electron density
+          self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
+        except:
+	  try:
+            etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_1d')
+            etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_1d')
+            self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
+            #read electron density
+            self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
+          except: #ion only sim
+            etemp_par = itemp_par
+            etemp_per = itemp_per
+            self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
+            #read electron density
+            self.ne1d = np.apply_along_axis(lambda a: np.interp(self.psin1d,self.psin001d,a),1,self.pot001d)/self.Te1d
+
         #create splines for t=0 data
         self.ti0_sp = splrep(self.psin1d,self.Ti1d[0,:],k=1)
         self.te0_sp = splrep(self.psin1d,self.Te1d[0,:],k=1)
