@@ -101,6 +101,7 @@ class _load(object):
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
         self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
+        assert t_start > 1, "t_start must be greater than 0"
         self.t_start=t_start
         self.t_end=t_end        
         if self.t_end is None: self.t_end=len(self.time)
@@ -403,9 +404,9 @@ class xgc1Load(_load):
         #    _,dpot[:,:,i-1],pot0[:,i-1],eden[:,:,i-1] = out[i]
             
         #except:    
-        for i in range(self.t_start,self.t_end+1):
+        for i in range(self.Ntimes):
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            _,self.dpot[:,:,i-1],self.pot0[:,i-1],self.eden[:,:,i-1] = read_fluc_single(i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
             
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
