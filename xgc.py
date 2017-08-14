@@ -468,15 +468,15 @@ class xgcaLoad(_load):
         self.etheta = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
         
-        for i in range(self.t_start,self.t_end+1):
-            twodFile = self.xgc_path + 'xgc.2d.'+str(i).zfill(5)
+        for i in range(self.Ntimes):
+            flucFile = self.xgc_path + 'xgc.2d.'+str(t_start+i).zfill(5)
 
-            self.iden[:,i-1] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
+            self.iden[:,i] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
 
-            self.dpot[:,i-1] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
-            self.pot0[:,i-1] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
-            self.epsi[:,i-1] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
-            self.etheta[:,i-1] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
+            self.dpot[:,i] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
+            self.pot0[:,i] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
+            self.epsi[:,i] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
+            self.etheta[:,i] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
 
 
     def loadf0mesh(self):
