@@ -101,7 +101,7 @@ class _load(object):
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
         self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
-        assert t_start > 1, "t_start must be greater than 0"
+        assert t_start > 0, "t_start must be greater than 0"
         self.t_start=t_start
         self.t_end=t_end        
         if self.t_end is None: self.t_end=len(self.time)
