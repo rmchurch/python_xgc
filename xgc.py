@@ -55,24 +55,34 @@ class _load(object):
     def __init__(self,xgc_path,t_start=1,t_end=None,dt=1,
         Rmin=None,Rmax=None,Zmin=None,Zmax=None,
         psinMin=None,psinMax=None,thetaMin=None,thetaMax=None, 
-	phi_start=0, phi_end=None,
+        phi_start=0, phi_end=None,
         kind='linear'):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
         """
+        def openAdios(x):
+            return adios.file(x+'.bp')
         def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
                 return x[v][...][inds]       
             else:
-                f = adios.file(x+'.bp')
-	        data = f[v][inds]
-       		f.close()
-	        return data
+                f = openAdios(x)
+                data = f[v][inds]
+                f.close()
+                return data
 
+        def openHDF5(x):
+            return h5py.File(x+'.h5','r')
         def readHDF5(x,v,inds=Ellipsis):
-            return h5py.File(x+'.h5','r')[v][inds]
+            if type(x) is h5py.File:
+                return x[v][...][inds]       
+            else:
+                f = openHDF5(x)
+                data = f[v][inds]
+                f.close()
+                return data
 
         print 'Loading XGC output data'
         
@@ -81,9 +91,11 @@ class _load(object):
         #check if files are in HDF5 or ADIOS format
         if os.path.exists(self.mesh_file+'.bp'):
             import adios
+            self.openCmd=openAdios
             self.readCmd=readAdios
         elif os.path.exists(self.mesh_file+'.h5'):
             import h5py
+            self.openCmd=openHDF5
             self.readCmd=readHDF5
         else:
             raise ValueError('No xgc.mesh file found')
@@ -101,7 +113,7 @@ class _load(object):
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
         self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
-        assert t_start > 0, "t_start must be greater than 0"
+        assert t_start > 0, "t_start must be greater than 0 (1-based index)"
         self.t_start=t_start
         self.t_end=t_end        
         if self.t_end is None: self.t_end=len(self.time)
@@ -125,8 +137,8 @@ class _load(object):
 
         self.thetaMin=thetaMin
         self.thetaMax=thetaMax
-        
-	self.kind = kind
+
+        self.kind = kind
         
         
         #read in mesh, equilibrium data, and finally fluctuation data
@@ -152,7 +164,7 @@ class _load(object):
         print'\tmagnetics loaded.'
         
         print 'Loading equilibrium...'
-        self.loadEquil()
+        self.load_oneddiag()
         print '\tequlibrium loaded.'
 
 
@@ -208,9 +220,9 @@ class _load(object):
         psin = psi/self.unit_dic['psi_x']
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
-	theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
-	
-	    # set limits if not user specified
+        theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
+    
+        # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
         if self.Rmax is None: self.Rmax=np.max(R)
         if self.Zmin is None: self.Zmin=np.min(Z)
@@ -228,10 +240,10 @@ class _load(object):
 
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
-	self.node_vol = node_vol[self.rzInds]
-    	self.theta = theta[self.rzInds]
+        self.node_vol = node_vol[self.rzInds]
+        self.theta = theta[self.rzInds]
         
-	    # psi interpolant
+        # psi interpolant
         fill_ = np.nan
         if self.kind == 'linear':
             self.psi_interp = LinearNDInterpolator(
@@ -257,54 +269,69 @@ class _load(object):
             self.tri = tri
 
 
-    def loadEquil(self):
-        """Load equilibrium profiles and compute the interpolant
+    def load_oneddiag(self):
+        """Load all oneddiag quantities. Rename required equilibrium profiles and compute the interpolant
         """
-        #read in 1d psin data
-        self.psin1d = self.readCmd(self.oneddiag_file,'psi')
+
+        #read in all data from xgc.oneddiag
+        f1d = self.openCmd(self.oneddiag_file)
+        class structtype(): pass
+        oneddiag = structtype()
+        keys = f1d.keys()
+        keys.sort()
+        for key in keys:
+            data = self.readCmd(f1d,key)
+            if data.ndim==2: data = data[self.mask1d,:]
+            setattr(oneddiag,key,data)
+        self.oneddiag = oneddiag
+
+        #TODO: Decide if should remove this legacy renaming
+        #modify 1d psin data
+        self.psin1d = self.oneddiag.psi
         if self.psin1d.ndim > 1: self.psin1d = self.psin1d[0,:]
 
         #read n=0,m=0 potential
         try:
-            self.psin001d = self.readCmd(self.oneddiag_file,'psi00_1d')/self.unit_dic['psi_x']
+            self.psin001d = sself.oneddiag.psi00_1d/self.unit_dic['psi_x']
         except:
-            self.psin001d = self.readCmd(self.oneddiag_file,'psi00')/self.unit_dic['psi_x']
+            self.psin001d = self.oneddiag.psi00/self.unit_dic['psi_x']
         if self.psin001d.ndim > 1: self.psin001d = self.psin001d[0,:]
-        self.pot001d = self.readCmd(self.oneddiag_file,'pot00_1d')[self.mask1d,:]
+        self.pot001d = self.oneddiag.pot00_1d
         
         #read electron temperature
-	try:
-          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_avg')
-          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_avg')
-	except:
-          itemp_par=self.readCmd(self.oneddiag_file,'i_parallel_mean_en_1d')
-          itemp_per=self.readCmd(self.oneddiag_file,'i_perp_temperature_1d')
-        self.Ti1d=(itemp_par[self.mask1d,:]+itemp_per[self.mask1d,:])*2./3
-        
-	try:
-          etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_avg')
-          etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_avg')
-          self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
-          #read electron density
-          self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
+        try:
+            itemp_par=self.oneddiag.i_parallel_mean_en_avg
+            itemp_per=self.oneddiag.i_perp_temperature_avg
         except:
-	  try:
-            etemp_par=self.readCmd(self.oneddiag_file,'e_parallel_mean_en_1d')
-            etemp_per=self.readCmd(self.oneddiag_file,'e_perp_temperature_1d')
-            self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
+            itemp_par=self.oneddiag.i_parallel_mean_en_1d
+            itemp_per=self.oneddiag.i_perp_temperature_1d
+        self.Ti1d=(itemp_par+itemp_per)*2./3
+        
+        try:
+            etemp_par=self.oneddiag.e_parallel_mean_en_avg
+            etemp_per=self.oneddiag.e_perp_temperature_avg
+            self.Te1d=(etemp_par+etemp_per)*2./3
             #read electron density
-            self.ne1d = self.readCmd(self.oneddiag_file,'e_gc_density_1d')[self.mask1d,:]
-          except: #ion only sim
-            etemp_par = itemp_par
-            etemp_per = itemp_per
-            self.Te1d=(etemp_par[self.mask1d,:]+etemp_per[self.mask1d,:])*2./3
-            #read electron density
-            self.ne1d = np.apply_along_axis(lambda a: np.interp(self.psin1d,self.psin001d,a),1,self.pot001d)/self.Te1d
+            self.ne1d = self.oneddiag.e_gc_density_1d
+        except:
+            try:
+                etemp_par=self.oneddiag.e_parallel_mean_en_1d
+                etemp_per=self.oneddiag.e_perp_temperature_1d
+                self.Te1d=(etemp_par+etemp_per)*2./3
+                #read electron density
+                self.ne1d = self.oneddiag.e_gc_density_1d
+            except: #ion only sim
+                etemp_par = itemp_par
+                etemp_per = itemp_per
+                self.Te1d=(etemp_par+etemp_per)*2./3
+                #read electron density
+                self.ne1d = np.apply_along_axis(lambda a: np.interp(self.psin1d,self.psin001d,a),1,self.pot001d)/self.Te1d
 
         #create splines for t=0 data
         self.ti0_sp = splrep(self.psin1d,self.Ti1d[0,:],k=1)
         self.te0_sp = splrep(self.psin1d,self.Te1d[0,:],k=1)
         self.ne0_sp = splrep(self.psin1d,self.ne1d[0,:],k=1)
+        
 
     def loadBfield(self):
         """Load magnetic field
@@ -374,7 +401,7 @@ class xgc1Load(_load):
         #    dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
         #    pot01 = flucFile['pot0'][rzInds]
         #    eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
-	#    return i,dpot1,pot01,eden1
+    #    return i,dpot1,pot01,eden1
        
          
         #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
@@ -543,20 +570,20 @@ class xgcaLoad(_load):
             Tpar2d = 2.*prefac*(np.einsum('k,ijk,ik->j',self.vpa**2.,f0,volfac)*vspace_vol/den2d - (Vpar2d/vth)**2.)
             Tperp2d = prefac*np.einsum('i,ijk,ik->j',self.vpe**2.,f0,volfac)*vspace_vol/den2d
             T2d = (Tpar2d + 2.*Tperp2d)/3.
-          	
+            
             if not isp:
                 self.ne2d = den2d
                 self.Vepar2d = Vpar2d
                 self.Te2d = T2d
-		self.Tepar2d = Tpar2d
-		self.Teperp2d = Tperp2d
+                self.Tepar2d = Tpar2d
+                self.Teperp2d = Tperp2d
             else:
                 self.ni2d = den2d
                 self.Vipar2d = Vpar2d
                 self.Ti2d = T2d
-		self.Tipar2d = Tpar2d
-		self.Tiperp2d = Tperp2d
-            #TODO: Add calculation for fluxes, Vpol (requires more info)
+                self.Tipar2d = Tpar2d
+                self.Tiperp2d = Tperp2d
+                #TODO: Add calculation for fluxes, Vpol (requires more info)
 
         return (self.ne2d,self.Vepar2d,self.Te2d,self.Tepar2d,self.Teperp2d,\
                 self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar2d,self.Tiperp2d)
