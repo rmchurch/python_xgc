@@ -12,6 +12,7 @@ import sys
 import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
+from matplotlib.tri import Triangulation
 
 #convenience gateway to load XGC1 or XGCa data
 def load(*args,**kwargs):
@@ -114,13 +115,14 @@ class _load(object):
         self.mask1d = self.oned_mask()
         self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
         assert t_start > 0, "t_start must be greater than 0 (1-based index)"
-        self.t_start=t_start
-        self.t_end=t_end        
-        if self.t_end is None: self.t_end=len(self.time)
+        self.t_start=int(t_start)
+        print type(self.t_start)
+        if t_end is None: t_end=len(self.time)
+        self.t_end=int(t_end)
+        dt = int(dt)
         self.time = self.time[(self.t_start-1):(self.t_end):dt]
         self.time_steps = np.arange(self.t_start,self.t_end+1,dt) #1-based for file names
         self.tstep = self.unit_dic['sml_dt']*self.unit_dic['diag_1d_period']
-        self.dt = self.tstep * dt
         self.Ntimes = len(self.time)
 
         #magnetics file
@@ -268,6 +270,8 @@ class _load(object):
         else:
             self.tri = tri
 
+        self.triObj = Triangulation(self.RZ[:,0],self.RZ[:,1],self.tri)
+
 
     def load_oneddiag(self):
         """Load all oneddiag quantities. Rename required equilibrium profiles and compute the interpolant
@@ -369,9 +373,11 @@ class xgc1Load(_load):
         #read in number of planes
         fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
         self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
-        self.phi_start=phi_start
-        self.phi_end = phi_end
-        if phi_end is None: self.phi_end=self.Nplanes-1
+        # assert isinstance(phi_start,int), "phi_start must be a plane index (Int)"
+        # assert isinstance(phi_end,int), "phi_end must be a plane index (Int)"
+        self.phi_start=int(phi_start)
+        if phi_end is None: phi_end=self.Nplanes-1
+        self.phi_end = int(phi_end)
         self.Nplanes=self.phi_end-self.phi_start+1
         
         print 'Loading fluctuations...'
@@ -388,7 +394,6 @@ class xgc1Load(_load):
         this loading method doesn't differentiate them and will read all of them.
         
         """
-        import adios
         from read_fluc_single import read_fluc_single 
         
         self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
@@ -430,10 +435,10 @@ class xgc1Load(_load):
         #for i in range(self.t_start,self.t_end+1):
         #    _,dpot[:,:,i-1],pot0[:,i-1],eden[:,:,i-1] = out[i]
             
-        #except:    
+        #except:
         for i in range(self.Ntimes):
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
             
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
