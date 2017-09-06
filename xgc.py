@@ -114,6 +114,7 @@ class _load(object):
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
         self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
+        if t_start is None: t_start=1
         assert t_start > 0, "t_start must be greater than 0 (1-based index)"
         self.t_start=int(t_start)
         print type(self.t_start)
@@ -365,7 +366,7 @@ class _load(object):
 
 
 class xgc1Load(_load):
-    def __init__(self,xgc_path,phi_start=0,phi_end=None,**kwargs):
+    def __init__(self,xgc_path,phi_start=0,phi_end=None,skip_fluc=False,**kwargs):
         #call parent loading init, including mesh and equilibrium
         #super().__init__(*args,**kwargs)
         super(xgc1Load,self).__init__(xgc_path,**kwargs)
@@ -380,9 +381,10 @@ class xgc1Load(_load):
         self.phi_end = int(phi_end)
         self.Nplanes=self.phi_end-self.phi_start+1
         
-        print 'Loading fluctuations...'
-        self.loadFluc()
-        print 'fluctuations loaded'
+        if not skip_fluc:
+            print 'Loading fluctuations...'
+            self.loadFluc()
+            print 'fluctuations loaded'
 
     def loadFluc(self):
         """Load non-adiabatic electron density, electrical static 
