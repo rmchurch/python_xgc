@@ -112,11 +112,10 @@ class _load(object):
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
-        self.time = self.readCmd(self.oneddiag_file,'time')[self.mask1d]
+        self.time = np.array(self.readCmd(self.oneddiag_file,'time')[self.mask1d],ndmin=1)
         if t_start is None: t_start=1
         assert t_start > 0, "t_start must be greater than 0 (1-based index)"
         self.t_start=int(t_start)
-        #print type(self.t_start)
         if t_end is None: t_end=len(self.time)
         self.t_end=int(t_end)
         dt = int(dt)
@@ -223,6 +222,7 @@ class _load(object):
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
         theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
+        wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index
     
         # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
@@ -244,6 +244,7 @@ class _load(object):
         self.psin = psin[self.rzInds]
         self.node_vol = node_vol[self.rzInds]
         self.theta = theta[self.rzInds]
+        self.wall_nodes = np.where(np.in1d(np.where(self.rzInds)[0],wall_nodes))[0]
         
         # psi interpolant
         fill_ = np.nan
@@ -281,7 +282,10 @@ class _load(object):
         f1d = self.openCmd(self.oneddiag_file)
         class structtype(): pass
         oneddiag = structtype()
-        keys = f1d.keys()
+        try:
+            keys = f1d.var.keys()
+        except:
+            keys = f1d.keys()
         keys.sort()
         for key in keys:
             data = self.readCmd(f1d,key)
@@ -362,6 +366,22 @@ class _load(object):
             mask1d = Ellipsis #pass variables unaffected
         
         return mask1d
+
+    def calc_bary(self,R,Z):
+        """Given points, calculate their barycentric coordinates"""
+        #find triangles corresponding to R,Z position. Equivalent to tr_save in XGC1
+        finder = self.triObj.get_trifinder()
+        trii = self.triObj.triangles[finder(R,Z),:]
+
+        #next, grab the vertices of these triangles, and put into an array T=[[x1,x2,x3],[y1,y2,y3],[1,1,1]],
+        #and stack the regular grid into xi=[R,Z,1]
+        x = self.triObj.x[trii]
+        y = self.triObj.y[trii]
+        T = np.concatenate( (x[...,np.newaxis],y[...,np.newaxis],np.ones(x.shape)[...,np.newaxis]),axis=2).swapaxes(1,2)
+        xi = np.concatenate( (R[...,np.newaxis],Z[...,np.newaxis],np.ones(R.shape)[...,np.newaxis]),axis=1)
+        #finally, solve system T bary = xi
+        return np.linalg.solve(T,xi)
+
 
 
 class xgc1Load(_load):
