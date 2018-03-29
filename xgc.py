@@ -62,7 +62,7 @@ class _load(object):
         time step.
         """
         def openAdios(x):
-            return adios.file(x+'.bp')
+            return adios.file(str(x)+'.bp')
         def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
@@ -75,7 +75,7 @@ class _load(object):
                 return data
 
         def openHDF5(x):
-            return h5py.File(x+'.h5','r')
+            return h5py.File(str(x)+'.h5','r')
         def readHDF5(x,v,inds=Ellipsis):
             if type(x) is h5py.File:
                 return x[v][...][inds]       
@@ -102,7 +102,6 @@ class _load(object):
             raise ValueError('No xgc.mesh file found')
 
         print 'from directory:'+ self.xgc_path
-
         #read in units file
         self.unit_file = self.xgc_path+'units.m'
         self.unit_dic = self.load_m(self.unit_file)
@@ -117,7 +116,7 @@ class _load(object):
         if t_start is None: t_start=1
         assert t_start > 0, "t_start must be greater than 0 (1-based index)"
         self.t_start=int(t_start)
-        print type(self.t_start)
+        #print type(self.t_start)
         if t_end is None: t_end=len(self.time)
         self.t_end=int(t_end)
         dt = int(dt)
@@ -438,10 +437,18 @@ class xgc1Load(_load):
         #    _,dpot[:,:,i-1],pot0[:,i-1],eden[:,:,i-1] = out[i]
             
         #except:
+        #for i in range(self.Ntimes):
+        #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+        #    _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+            
         for i in range(self.Ntimes):
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
-            
+            f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
+            self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
+            self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
+            self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
+            f.close()
+
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
             self.eden = self.eden.squeeze()
