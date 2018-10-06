@@ -13,6 +13,16 @@ import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
 from matplotlib.tri import Triangulation
+import adios as ad
+import h5py
+import matplotlib.pyplot as plt
+from scipy.io import matlab
+from scipy.io.matlab import loadmat
+from scipy.interpolate import interp1d
+from scipy.ndimage.filters import gaussian_filter
+from scipy import stats
+from bokeh.mpl import to_bokeh
+
 
 #convenience gateway to load XGC1 or XGCa data
 def load(*args,**kwargs):
@@ -189,6 +199,7 @@ class _load(object):
         """load particle masses from fort.input.used (currently ptl_e_mass_au not in units.m
         """
         #TODO: Not general, someimtes comma on end of number
+        global ptl_mass
         proton_mass = 1.6720e-27
         e_charge = 1.6022e-19
         ptl_mass = np.array([5.446e-4,2.0])*proton_mass
@@ -222,7 +233,12 @@ class _load(object):
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
         theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
-        wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index
+        
+
+        try:
+            wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index
+        except:
+            wall_nodes = self.readCmd(self.mesh_file,'psn_wall_nodes')-1
     
         # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
@@ -280,8 +296,8 @@ class _load(object):
 
         #read in all data from xgc.oneddiag
         f1d = self.openCmd(self.oneddiag_file)
-        class structtype(): pass
-        oneddiag = structtype()
+        oneddiag={}
+        #class structtype(): pass
         try:
             keys = f1d.var.keys()
         except:
@@ -290,44 +306,44 @@ class _load(object):
         for key in keys:
             data = self.readCmd(f1d,key)
             if data.ndim==2: data = data[self.mask1d,:]
-            setattr(oneddiag,key,data)
+            oneddiag[key]=data
         self.oneddiag = oneddiag
 
         #TODO: Decide if should remove this legacy renaming
         #modify 1d psin data
-        self.psin1d = self.oneddiag.psi
+        self.psin1d = self.oneddiag['psi']
         if self.psin1d.ndim > 1: self.psin1d = self.psin1d[0,:]
 
         #read n=0,m=0 potential
         try:
-            self.psin001d = sself.oneddiag.psi00_1d/self.unit_dic['psi_x']
+            self.psin001d = self.oneddiag['psi00_1d']/self.unit_dic['psi_x']
         except:
-            self.psin001d = self.oneddiag.psi00/self.unit_dic['psi_x']
+            self.psin001d = self.oneddiag['psi00']/self.unit_dic['psi_x']
         if self.psin001d.ndim > 1: self.psin001d = self.psin001d[0,:]
-        self.pot001d = self.oneddiag.pot00_1d
+        self.pot001d = self.oneddiag['pot00_1d']
         
         #read electron temperature
         try:
-            itemp_par=self.oneddiag.i_parallel_mean_en_avg
-            itemp_per=self.oneddiag.i_perp_temperature_avg
+            itemp_par=self.oneddiag['i_parallel_mean_en_avg']
+            itemp_per=self.oneddiag['i_perp_temperature_avg']
         except:
-            itemp_par=self.oneddiag.i_parallel_mean_en_1d
-            itemp_per=self.oneddiag.i_perp_temperature_1d
+            itemp_par=self.oneddiag['i_parallel_mean_en_1d']
+            itemp_per=self.oneddiag['i_perp_temperature_1d']
         self.Ti1d=(itemp_par+itemp_per)*2./3
         
         try:
-            etemp_par=self.oneddiag.e_parallel_mean_en_avg
-            etemp_per=self.oneddiag.e_perp_temperature_avg
+            etemp_par=self.oneddiag['e_parallel_mean_en_avg']
+            etemp_per=self.oneddiag['e_perp_temperature_avg']
             self.Te1d=(etemp_par+etemp_per)*2./3
             #read electron density
-            self.ne1d = self.oneddiag.e_gc_density_1d
+            self.ne1d = self.oneddiag['e_gc_density_1d']
         except:
             try:
-                etemp_par=self.oneddiag.e_parallel_mean_en_1d
-                etemp_per=self.oneddiag.e_perp_temperature_1d
+                etemp_par=self.oneddiag['e_parallel_mean_en_1d']
+                etemp_per=self.oneddiag['e_perp_temperature_1d']
                 self.Te1d=(etemp_par+etemp_per)*2./3
                 #read electron density
-                self.ne1d = self.oneddiag.e_gc_density_1d
+                self.ne1d = self.oneddiag['e_gc_density_1d']
             except: #ion only sim
                 etemp_par = itemp_par
                 etemp_per = itemp_per
@@ -405,6 +421,12 @@ class xgc1Load(_load):
             self.loadFluc()
             print 'fluctuations loaded'
 
+        if not skip_fluc:
+            print 'Loading flux data...'
+            #self.loadf3d()
+            print 'flux surfaces loaded'
+
+
     def loadFluc(self):
         """Load non-adiabatic electron density, electrical static 
         potential fluctuations, and n=0 potential for 3D mesh.
@@ -415,31 +437,49 @@ class xgc1Load(_load):
         this loading method doesn't differentiate them and will read all of them.
         
         """
-        from read_fluc_single import read_fluc_single 
+        #from read_fluc_single import read_fluc_single #gives no module error
         
         self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
         self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
         self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
-        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
-        #    import adios
-        #    flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5))
+        #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
+         #   import adios
+          #  flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+           # dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
+            #pot01 = flucFile['pot0'][rzInds]
+            #eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
+            #return i,dpot1,pot01,eden1
+           
+             
+        def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
+            import adios
+            flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+            dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
+            eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            return i,dpot1,pot01,eden1
+
+        #!/usr/bin python
+
+        import time
+        #start = time.time()
+        #def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end): #for ipyparallel
+        #    print 'went in method'
+        #    flucFile = openCmd(xgc_path + 'xgc.3d.'+str(i).zfill(5))
+            #flucFile = h5py.File(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.h5')
+        #    start = time.time()
         #    dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
         #    pot01 = flucFile['pot0'][rzInds]
         #    eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
-    #    return i,dpot1,pot01,eden1
-       
-         
-        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
-        #    import adios
-        #    flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5))
-        #    dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-        #    pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
-        #    eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-        
+        #    flucFile.close()
+        #    print 'Read time: '+str(time.time()-start)
+        #    return i,dpot1,pot01,eden1
+
+
         #try:
         #import ipyparallel as ipp
-
+        #print "went into ipyparallel"
         #rc = ipp.Client()
 
         #dview = rc[:] #load balanced view cant be used because I need to push data
@@ -448,31 +488,113 @@ class xgc1Load(_load):
         #    import adios
         #    import h5py
         #    import time
-        #    from read_fluc_single import read_fluc_single 
+        #    import sys
+        #    sys.path.append(os.environ['HOME']+'/python_xgc/')
+            #from read_fluc_single import read_fluc_single 
         #dview.push(dict(xgc_path=self.xgc_path,rzInds=self.rzInds,phi_start=self.phi_start,phi_end=self.phi_end))
-        #from read_fluc_single import read_fluc_single 
-        #out = dview.map_sync(lambda i: read_fluc_single(i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
+                    #from read_fluc_single import read_fluc_single 
+        #out = dview.map_sync(lambda i: read_fluc_single(i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
+                    
+        #for i in range(self.Ntimes): #self.t_start,self.t_end+1
+        #    _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = out[i]
+        #print 'Read time: '+str(time.time()-start)
         
-        #for i in range(self.t_start,self.t_end+1):
-        #    _,dpot[:,:,i-1],pot0[:,i-1],eden[:,:,i-1] = out[i]
-            
         #except:
-        #for i in range(self.Ntimes):
-        #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-        #    _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
-            
-        for i in range(self.Ntimes):
+        for i in range(self.Ntimes): 
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
-            self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
-            f.close()
+            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+                
+            for i in range(self.Ntimes): #same as the for loop above
+                sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+                f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
+                self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
+                self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
+                self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
+                f.close()
 
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
             self.eden = self.eden.squeeze()
+
+    def loadf3d(self):
+        #from read_fluc_single import read_fluc_single #gives no module error
         
+        self.i_T_perp = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.i_E_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.i_u_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.i_den = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_T_perp = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_E_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_u_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_den = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+
+        #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
+         #   import adios
+          #  flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+           # dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
+            #pot01 = flucFile['pot0'][rzInds]
+            #eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
+            #return i,dpot1,pot01,eden1
+        # import time
+        # start = time.time()
+        # def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end):
+        #     flucFile = openCmd(xgc_path + 'xgc.f3d.'+str(i).zfill(5))
+        #     #flucFile = h5py.File(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.h5')
+            
+        #     i_T_perp = flucFile['i_T_perp'][rzInds,phi_start:(phi_end+1)]
+        #     i_E_para = flucFile['i_E_para'][rzInds,phi_start:(phi_end+1)]
+        #     i_u_para = flucFile['i_u_para'][rzInds,phi_start:(phi_end+1)]
+        #     i_den = flucFile['i_den'][rzInds,phi_start:(phi_end+1)]
+        #     e_T_perp = flucFile['e_T_perp'][rzInds,phi_start:(phi_end+1)]
+        #     e_E_para = flucFile['e_E_para'][rzInds,phi_start:(phi_end+1)]
+        #     e_u_para = flucFile['e_u_para'][rzInds,phi_start:(phi_end+1)]
+        #     e_den = flucFile['e_den'][rzInds,phi_start:(phi_end+1)]
+        #     flucFile.close()
+        #     print 'Read time: '+str(time.time()-start)
+        #     return i_T_perp,i_E_para,i_u_para,i_den,e_T_perp,e_E_para,e_u_para,e_den
+           
+        # import ipyparallel as ipp
+        # print "went into ipyparallel"
+        # rc = ipp.Client()
+
+        # dview = rc[:] #load balanced view cant be used because I need to push data
+        # dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
+        # with dview.sync_imports():
+        #     import adios
+        #     import h5py
+        #     import time
+        #     import sys
+        #     sys.path.append(os.environ['HOME']+'/python_xgc/')
+        #     #from read_fluc_single import read_fluc_single 
+        # dview.push(dict(xgc_path=self.xgc_path,rzInds=self.rzInds,phi_start=self.phi_start,phi_end=self.phi_end))
+        #             #from read_fluc_single import read_fluc_single 
+        # out = dview.map_sync(lambda i: read_fluc_single(i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
+                    
+        # for i in range(self.Ntimes): #self.t_start,self.t_end+
+        #     self.i_T_perp[:,:,i],self.i_E_para[:,:,i],self.i_u_para[:,:,i],self.i_den[:,:,i],self.e_T_perp[:,:,i],self.e_E_para[:,:,i],self.e_u_para[:,:,i],self.e_den[:,:,i] = out[i]
+        # print 'Read time: '+str(time.time()-start)
+
+        def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
+           import adios
+           f3dFile = adios.file(xgc_path + 'xgc.f3d.'+str(i).zfill(5)+'.bp')
+           i_T_perp = readCmd(f3dFile,'i_T_perp',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           i_E_para = readCmd(f3dFile,'i_E_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),)  )#[rzInds]
+           i_u_para = readCmd(f3dFile,'i_u_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),)  )#[rzInds]            
+           i_den = readCmd(f3dFile,'i_den',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_T_perp = readCmd(f3dFile,'e_T_perp',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_E_para = readCmd(f3dFile,'e_E_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_u_para = readCmd(f3dFile,'e_u_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_den = readCmd(f3dFile,'e_den',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           return i_T_perp,i_E_para,i_u_para,i_den,e_T_perp,e_E_para,e_u_para,e_den
+        
+        i=0 #read in the last time step file since f3d is not over time
+        sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+        self.i_T_perp[:,:,0],self.i_E_para[:,:,i],self.i_u_para[:,:,0],self.i_den[:,:,0],self.e_T_perp[:,:,0],self.e_E_para[:,:,0],self.e_u_para[:,:,0],self.e_den[:,:,0] = read_fluc_single(self.t_start+i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+                
+
+        #calculate full temperature
+        self.i_T = (self.i_T_perp+(self.i_E_para- (ptl_mass[1]/2*self.i_u_para**2)/(1.609e-19 )))*2./3
+        self.e_T = (self.e_T_perp+(self.e_E_para- (ptl_mass[0]/2*self.e_u_para**2)/(1.609e-19 )))*2./3
 
     def calcNeTotal(self,psin=None):
         """Calculate the total electron at the wanted points.
@@ -508,6 +630,136 @@ class xgc1Load(_load):
         self.pot = self.pot0[:,np.newaxis,:] + self.dpot
         return self.pot
 
+    def flux_surfaces(self, inds=None): #find flux surfaces
+        if inds is None: inds=range(self.psin.size)
+        global psin_surf
+        global bin_range
+        #bins2 = (bins[1:]+bins[0:-1])/2.
+        #psin_surf = bin2[counts>200]
+        (counts,bins,patches)=plt.hist(self.psin[inds],bins=2000)
+        psin_surf=[]
+        bin_range= [[0 for i in range(2)]]
+        #check theta spread for non aligned points
+        def theta_spread():
+            isin = False
+            psinLower= psin_surf[-1]-0.001
+            psinUpper=psin_surf[-1]+0.001
+            psinTemp=np.array(self.psin)
+            psinIndices=np.where((psinTemp>=psinLower) & (psinTemp<=psinUpper))[0]
+
+            isin = np.any((self.theta[psinIndices]>0) & (self.theta[psinIndices]<180))
+            return isin
+
+        def same_surf(i):
+            global psin_surf
+            global bin_range
+            if (psin_surf.shape[0]!=1) & highCount==True:
+                if (psin_surf[-1]< (psin_surf[-2]+0.001)):
+                    psin_surf[-2]=(psin_surf[-2]+psin_surf[-1])/2
+                    psin_surf=np.delete(psin_surf,-1)
+                else:
+                    bin_range=np.append(bin_range,[[bins[i],bins[i+1]]],0)
+
+            else:
+                bin_range=np.append(bin_range,[[bins[i],bins[i+1]]],0)
+
+        highCount=False
+        for i in range(counts.shape[0]):
+            if (counts[i]>200) & (highCount==True):
+                psin_surf=np.append(psin_surf,(bins[i]+bins[i+1])/2)
+                isin= theta_spread()
+                if isin==False:
+                    psin_surf=np.delete(psin_surf,-1)
+                else:
+                    same_surf(i)
+            if (counts[i]>0) & (highCount==False):
+                psin_surf=np.append(psin_surf,(bins[i]+bins[i+1])/2)
+                if counts[i]>=200:
+                    highCount=True
+                isin = theta_spread()
+                if isin==False:
+                    psin_surf=np.delete(psin_surf,-1)
+                else:
+                    same_surf(i)
+
+        bin_range=bin_range[1:,:]
+        return psin_surf,bin_range
+
+
+    def hist2dline1(self,x,y,bins,range=None,cmap='Reds',minmax=False):
+        x = x.flatten()
+        y = y.flatten()
+        goodInds = np.where( ~np.isnan(x) & ~np.isnan(y) )[0]
+        (cnts,xedges,yedges) = np.histogram2d(x[goodInds],y[goodInds],bins=bins,range=range)
+        return cnts, xedges,yedges
+
+    def hist2dline2(self,x,y,bins,range=None,cmap='Reds',minmax=False):
+        x = x.flatten()
+        y = y.flatten()
+        goodInds = np.where( ~np.isnan(x) & ~np.isnan(y) )[0]
+        (cnts,xedges,yedges) = np.histogram2d(x[goodInds],y[goodInds],bins=bins,range=range)
+        xedgeMid = (xedges[1::] + xedges[:-1])/2.
+        yedgeMid = (yedges[1::] + yedges[:-1])/2.
+        yAvg = np.sum(yedgeMid[np.newaxis,:]*cnts,axis=1)/np.sum(cnts,axis=1)
+        dMin=[]
+        dMax=[]
+        if minmax:
+            dMin = np.empty((xedges.size-1,))
+            dMax = np.empty((xedges.size-1,))
+            for i in np.arange(xedges.size-1):
+                if (y[(x>=xedges[i]) & (x<xedges[i+1])].size==0):
+                    print i
+                    dMin[i]=np.nan
+                    dMax[i]=np.nan
+                else:
+                    dMin[i] = y[(x>=xedges[i]) & (x<xedges[i+1])].min()
+                    dMax[i] = y[(x>=xedges[i]) & (x<xedges[i+1])].max()
+            for i in np.arange(xedges.size-1):
+                if np.isnan(dMin[i])==True:
+                    dMin[i]=(dMin[i-1]+dMin[i+1])/2
+                    dMax[i]=(dMax[i-1]+dMax[i+1])/2
+            plt.plot(xedgeMid,dMin,'k--',xedgeMid,dMax,'k--')
+        return xedgeMid,yAvg,dMin,dMax
+    def kfSpectrum(self,L,time,frames,noNormalize=False, noFilter=False, window=None):
+
+        if window is not None:
+            #default to Hanning, add others later
+            wL=0.5*(1-np.cos(2.*np.pi*np.arange(L.size)/L.size))
+            wTime=0.5*(1-np.cos(2.*np.pi*np.arange(time.size)/time.size))
+            win2 = wL[:,np.newaxis]*wTime[np.newaxis,:] #or should this be matrix mult?
+            frames = frames*win2
+
+        NFFT = 2**np.ceil(np.log2(frames.shape[0:2])).astype(int)
+        # %%%Create k and f arrays
+        # %create frequency array
+        Fs=1./np.mean(np.diff(time));
+        f=Fs/2*np.linspace(0,1,NFFT[1]/2+1) # %highest frequency 0.5 sampling rate (Nyquist)
+
+        # %METHOD 1: No anti-aliasing
+        # %create k array
+        kmax=np.pi/np.min(np.diff(L))
+        k=kmax*np.linspace(-1,1,NFFT[0])
+        kfspec=np.fft.fftshift(np.fft.ifft(np.fft.fft(frames,n=NFFT[1],axis=1),n=NFFT[0],axis=0))  #%fftshift since Matlab puts positive frequencies first
+        kfspec=kfspec[:,NFFT[1]/2-1:,...]
+
+        # % %METHOD 2: Anti-aliasing
+        # % kfspec=fftshift(fft(frames,NFFT(2),2));
+        # % %for now, remove negative frequency components
+        # % kfspec=kfspec(:,NFFT(2)/2:end);
+        # % kmin=pi/(L(end)-L(1));
+        # % kmax=pi/min(diff(L))*0.85;
+        # % k=[linspace(-kmax,-kmin,NFFT(1)/2-1) 0 linspace(kmin,kmax,NFFT(1)/2)];
+        # % kfspec=exp(i*k(:)*L(:)')*kfspec;
+
+        # %%%normalize, S(k|w)=S(k,w)/S(w)
+        if not noNormalize:
+            kfspec=np.abs(kfspec)/np.sum(np.abs(kfspec),axis=0)[np.newaxis,:]
+
+        # %%%OPTIONAL: filtering (smooths images)
+        if not noFilter:
+            kfspec = gaussian_filter(np.abs(kfspec), sigma=5)
+
+        return k,f,kfspec
 
 
 class xgcaLoad(_load):
