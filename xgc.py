@@ -21,7 +21,6 @@ from scipy.io.matlab import loadmat
 from scipy.interpolate import interp1d
 from scipy.ndimage.filters import gaussian_filter
 from scipy import stats
-from bokeh.mpl import to_bokeh
 
 
 #convenience gateway to load XGC1 or XGCa data
