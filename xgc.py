@@ -222,7 +222,14 @@ class _load(object):
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
         theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
-        wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index
+        try:
+            wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index. Usually for XGCa
+        except:
+            try:
+                wall_nodes = self.readCmd(self.mesh_file,'psn_wall_nodes')-1 #-1 for 0-based index. This is sometimes for XGC1
+            except:
+                print 'no wall_nodes'
+		wall_nodes = np.array([-1])
     
         # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
