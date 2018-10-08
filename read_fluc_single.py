@@ -3,6 +3,7 @@
 import time
 
 def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end):
+	print 'went in other file'
     flucFile = openCmd(xgc_path + 'xgc.3d.'+str(i).zfill(5))
     #flucFile = h5py.File(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.h5')
     start = time.time()

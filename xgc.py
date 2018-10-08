@@ -13,6 +13,16 @@ import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
 from matplotlib.tri import Triangulation
+import adios as ad
+import h5py
+import matplotlib.pyplot as plt
+from scipy.io import matlab
+from scipy.io.matlab import loadmat
+from scipy.interpolate import interp1d
+from scipy.ndimage.filters import gaussian_filter
+from scipy import stats
+from bokeh.mpl import to_bokeh
+
 
 #convenience gateway to load XGC1 or XGCa data
 def load(*args,**kwargs):
@@ -57,7 +67,8 @@ class _load(object):
         Rmin=None,Rmax=None,Zmin=None,Zmax=None,
         psinMin=None,psinMax=None,thetaMin=None,thetaMax=None, 
         phi_start=0, phi_end=None,
-        kind='linear'):
+        kind='linear',
+        skiponeddiag=False):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
         """
@@ -164,9 +175,12 @@ class _load(object):
         self.loadBfield()
         print'\tmagnetics loaded.'
         
-        print 'Loading equilibrium...'
-        self.load_oneddiag()
-        print '\tequlibrium loaded.'
+        if not skiponeddiag:
+            print 'Loading equilibrium...'
+            self.load_oneddiag()
+            print '\tequlibrium loaded.'
+        else:
+            print 'Skipping equilibrium...'
 
 
 
@@ -189,6 +203,7 @@ class _load(object):
         """load particle masses from fort.input.used (currently ptl_e_mass_au not in units.m
         """
         #TODO: Not general, someimtes comma on end of number
+        global ptl_mass
         proton_mass = 1.6720e-27
         e_charge = 1.6022e-19
         ptl_mass = np.array([5.446e-4,2.0])*proton_mass
@@ -287,8 +302,8 @@ class _load(object):
 
         #read in all data from xgc.oneddiag
         f1d = self.openCmd(self.oneddiag_file)
-        class structtype(): pass
-        oneddiag = structtype()
+        oneddiag={}
+        #class structtype(): pass
         try:
             keys = f1d.var.keys()
         except:
@@ -297,44 +312,44 @@ class _load(object):
         for key in keys:
             data = self.readCmd(f1d,key)
             if data.ndim==2: data = data[self.mask1d,:]
-            setattr(oneddiag,key,data)
+            oneddiag[key]=data
         self.oneddiag = oneddiag
 
         #TODO: Decide if should remove this legacy renaming
         #modify 1d psin data
-        self.psin1d = self.oneddiag.psi
+        self.psin1d = self.oneddiag['psi']
         if self.psin1d.ndim > 1: self.psin1d = self.psin1d[0,:]
 
         #read n=0,m=0 potential
         try:
-            self.psin001d = sself.oneddiag.psi00_1d/self.unit_dic['psi_x']
+            self.psin001d = self.oneddiag['psi00_1d']/self.unit_dic['psi_x']
         except:
-            self.psin001d = self.oneddiag.psi00/self.unit_dic['psi_x']
+            self.psin001d = self.oneddiag['psi00']/self.unit_dic['psi_x']
         if self.psin001d.ndim > 1: self.psin001d = self.psin001d[0,:]
-        self.pot001d = self.oneddiag.pot00_1d
+        self.pot001d = self.oneddiag['pot00_1d']
         
         #read electron temperature
         try:
-            itemp_par=self.oneddiag.i_parallel_mean_en_avg
-            itemp_per=self.oneddiag.i_perp_temperature_avg
+            itemp_par=self.oneddiag['i_parallel_mean_en_avg']
+            itemp_per=self.oneddiag['i_perp_temperature_avg']
         except:
-            itemp_par=self.oneddiag.i_parallel_mean_en_1d
-            itemp_per=self.oneddiag.i_perp_temperature_1d
+            itemp_par=self.oneddiag['i_parallel_mean_en_1d']
+            itemp_per=self.oneddiag['i_perp_temperature_1d']
         self.Ti1d=(itemp_par+itemp_per)*2./3
         
         try:
-            etemp_par=self.oneddiag.e_parallel_mean_en_avg
-            etemp_per=self.oneddiag.e_perp_temperature_avg
+            etemp_par=self.oneddiag['e_parallel_mean_en_avg']
+            etemp_per=self.oneddiag['e_perp_temperature_avg']
             self.Te1d=(etemp_par+etemp_per)*2./3
             #read electron density
-            self.ne1d = self.oneddiag.e_gc_density_1d
+            self.ne1d = self.oneddiag['e_gc_density_1d']
         except:
             try:
-                etemp_par=self.oneddiag.e_parallel_mean_en_1d
-                etemp_per=self.oneddiag.e_perp_temperature_1d
+                etemp_par=self.oneddiag['e_parallel_mean_en_1d']
+                etemp_per=self.oneddiag['e_perp_temperature_1d']
                 self.Te1d=(etemp_par+etemp_per)*2./3
                 #read electron density
-                self.ne1d = self.oneddiag.e_gc_density_1d
+                self.ne1d = self.oneddiag['e_gc_density_1d']
             except: #ion only sim
                 etemp_par = itemp_par
                 etemp_per = itemp_per
@@ -390,163 +405,6 @@ class _load(object):
         return np.linalg.solve(T,xi)
 
 
-
-class xgc1Load(_load):
-    def __init__(self,xgc_path,phi_start=0,phi_end=None,skip_fluc=False,**kwargs):
-        #call parent loading init, including mesh and equilibrium
-        #super().__init__(*args,**kwargs)
-        super(xgc1Load,self).__init__(xgc_path,**kwargs)
-
-        #read in number of planes
-        fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
-        self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
-        # assert isinstance(phi_start,int), "phi_start must be a plane index (Int)"
-        # assert isinstance(phi_end,int), "phi_end must be a plane index (Int)"
-        self.phi_start=int(phi_start)
-        if phi_end is None: phi_end=self.Nplanes-1
-        self.phi_end = int(phi_end)
-        self.Nplanes=self.phi_end-self.phi_start+1
-        
-        if not skip_fluc:
-            print 'Loading fluctuations...'
-            self.loadFluc()
-            print 'fluctuations loaded'
-
-    def loadFluc(self):
-        """Load non-adiabatic electron density, electrical static 
-        potential fluctuations, and n=0 potential for 3D mesh.
-        The required planes are calculated and stored in sorted array.
-        fluctuation data on each plane is stored in the same order.
-        Note that for full-F runs, the perturbed electron density 
-        includes both turbulent fluctuations and equilibrium relaxation,
-        this loading method doesn't differentiate them and will read all of them.
-        
-        """
-        from read_fluc_single import read_fluc_single 
-        
-        self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
-        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
-        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
-        
-        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
-        #    import adios
-        #    flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5))
-        #    dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
-        #    pot01 = flucFile['pot0'][rzInds]
-        #    eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
-    #    return i,dpot1,pot01,eden1
-       
-         
-        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end,readCmd):
-        #    import adios
-        #    flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5))
-        #    dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-        #    pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
-        #    eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-        
-        #try:
-        #import ipyparallel as ipp
-
-        #rc = ipp.Client()
-
-        #dview = rc[:] #load balanced view cant be used because I need to push data
-        #dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
-        #with dview.sync_imports():
-        #    import adios
-        #    import h5py
-        #    import time
-        #    from read_fluc_single import read_fluc_single 
-        #dview.push(dict(xgc_path=self.xgc_path,rzInds=self.rzInds,phi_start=self.phi_start,phi_end=self.phi_end))
-        #from read_fluc_single import read_fluc_single 
-        #out = dview.map_sync(lambda i: read_fluc_single(i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
-        
-        #for i in range(self.t_start,self.t_end+1):
-        #    _,dpot[:,:,i-1],pot0[:,i-1],eden[:,:,i-1] = out[i]
-            
-        #except:
-        #for i in range(self.Ntimes):
-        #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-        #    _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
-            
-        for i in range(self.Ntimes):
-            sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
-            self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
-            self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
-            f.close()
-
-        if self.Nplanes == 1:
-            self.dpot = self.dpot.squeeze()
-            self.eden = self.eden.squeeze()
-        
-
-    def calcNeTotal(self,psin=None):
-        """Calculate the total electron at the wanted points.
-
-        :param np.array[N] psin
-
-        :returns: Total density
-        :rtype: np.array[N]
-        
-        """
-        
-        if psin is None: psin=self.psin
-
-        # temperature and density (equilibrium) on the psi mesh
-        te0 = splev(psin,self.te0_sp)
-        # avoid temperature <= 0
-        te0[te0<np.min(self.Te1d)/10] = np.min(self.Te1d)/10
-        ne0 = splev(psin,self.ne0_sp)
-        ne0[ne0<np.min(self.ne1d)/10] = np.min(self.ne1d)/10
-        
-
-        #neAdiabatic = ne0*exp(dpot/te0)
-        factAdiabatic = np.exp(np.einsum('i...,i...->i...',self.dpot,1./te0))
-        self.neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
-
-        #ne = neAdiatbatic + dneKinetic
-        self.n_e = self.neAdiabatic + self.eden
-
-        #TODO I've ignored checking whether dne<<ne0, etc. may want to add
-        return self.n_e
-
-    def calcPotential(self):
-        self.pot = self.pot0[:,np.newaxis,:] + self.dpot
-        return self.pot
-
-
-
-class xgcaLoad(_load):
-    def __init__(self,xgc_path,**kwargs):
-        #call parent loading init, including mesh and equilibrium
-        #super().__init__(*args,**kwargs)
-        super(xgcaLoad,self).__init__(xgc_path,**kwargs)
-
-        print 'Loading f0 data...'
-        self.loadf0mesh()
-        print 'f0 data loaded'
-
-    def load2D():
-        self.iden = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
-        
-        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
-        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
-        self.epsi = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
-        self.etheta = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
-        
-        
-        for i in range(self.Ntimes):
-            flucFile = self.xgc_path + 'xgc.2d.'+str(t_start+i).zfill(5)
-
-            self.iden[:,i] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
-
-            self.dpot[:,i] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
-            self.pot0[:,i] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
-            self.epsi[:,i] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
-            self.etheta[:,i] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
-
-
     def loadf0mesh(self):
         ##f0 mesh data
         self.f0mesh_file = self.xgc_path+'xgc.f0.mesh'
@@ -584,100 +442,462 @@ class xgcaLoad(_load):
         """
 
         self.f0_file = self.xgc_path + 'xgc.f0.'+str(ind).zfill(5)
-        #discrete cell correction
-        volfac = np.ones((self.vpe.size,self.vpa.size))
-        volfac[0,:]=0.5 #0.5 for where ivpe==0
+        #read distribution data
+        e_f  = self.readCmd(self.f0_file,'e_f')[:,self.rzInds,:]
+        i_f  = self.readCmd(self.f0_file,'i_f')[:,self.rzInds,:]
 
-        for isp in range(2):
-            # Extract species of interest (0 electronw, 1 ions)
-            mass = self.ptl_mass[isp]
-            charge = self.ptl_charge[isp]
-
-            vspace_vol = self.f0_grid_vol_vonly[isp,:]
-            Tev = self.f0_T_ev[isp,:]
-            vth=np.sqrt(np.abs(charge)*Tev/mass)
-
-            #read distribution data
-            if not isp:
-                f0  = self.readCmd(self.f0_file,'e_f')[:,self.rzInds,:]
-            else:
-                f0  = self.readCmd(self.f0_file,'i_f')[:,self.rzInds,:]
-
-            #calculate moments of f0 using einsum for fast(er) calculation
-            den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
-            Vpar2d = vth*np.einsum('k,ijk,ik->j',self.vpa,f0,volfac)*vspace_vol/den2d
-
-            prefac = mass*vth**2./(2.*np.abs(charge))
-            Tpar2d = 2.*prefac*(np.einsum('k,ijk,ik->j',self.vpa**2.,f0,volfac)*vspace_vol/den2d - (Vpar2d/vth)**2.)
-            Tperp2d = prefac*np.einsum('i,ijk,ik->j',self.vpe**2.,f0,volfac)*vspace_vol/den2d
-            T2d = (Tpar2d + 2.*Tperp2d)/3.
-            
-            if not isp:
-                self.ne2d = den2d
-                self.Vepar2d = Vpar2d
-                self.Te2d = T2d
-                self.Tepar2d = Tpar2d
-                self.Teperp2d = Tperp2d
-            else:
-                self.ni2d = den2d
-                self.Vipar2d = Vpar2d
-                self.Ti2d = T2d
-                self.Tipar2d = Tpar2d
-                self.Tiperp2d = Tperp2d
-                #TODO: Add calculation for fluxes, Vpol (requires more info)
+        self.ne2d,self.Vepar2d,self.Te2d,self.Tepar2d,self.Teperp2d = self.calcMoments1(e_f,0)
+        self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar2d,self.Tiperp2d = self.calcMoments1(i_f,1)
+        #TODO: Add calculation for fluxes, Vpol (requires more info)
 
         return (self.ne2d,self.Vepar2d,self.Te2d,self.Tepar2d,self.Teperp2d,\
                 self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar2d,self.Tiperp2d)
 
 
 
-    def calcMoments1(ind):
+    def calcMoments1(self,f0,isp):
         """Calculate moments from the f0 data
         """
+        mass,charge,vspace_vol,volfac,vth = self.moments_params(isp)
+
+        #calculate moments of f0 using einsum for fast(er) calculation
+        den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
+        Vpar2d = vth*np.einsum('k,ijk,ik->j',self.vpa,f0,volfac)*vspace_vol/den2d
+
+        prefac = mass/(2.*np.abs(charge))
+        Tpar2d = 2.*prefac*( vth**2.*np.einsum('k,ijk,ik->j',self.vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
+        Tperp2d = prefac*vth**2.*np.einsum('i,ijk,ik->j',self.vpe**2.,f0,volfac)*vspace_vol/den2d
+        T2d = (Tpar2d + 2.*Tperp2d)/3.
+
+        return (den2d,Vpar2d,T2d,Tpar2d,Tperp2d)
+
+    def moments_params(self,isp):
+        """Return mass,charge,velocity space volume,discrete cell correction, and thermal velocity
+        """
+        
+        # Extract species of interest (0 electrons, 1 ions)
+        mass = self.ptl_mass[isp]
+        charge = self.ptl_charge[isp]
+
+        vspace_vol = self.f0_grid_vol_vonly[isp,:]
+        
         #discrete cell correction
-        volfac = np.ones((vpe.size,vpa.size))
+        volfac = np.ones((self.vpe.size,self.vpa.size))
         volfac[0,:]=0.5 #0.5 for where ivpe==0
+        
+        Tev = self.f0_T_ev[isp,:]
+        vth=np.sqrt(np.abs(charge)*Tev/mass)
+        
+        return mass,charge,vspace_vol,volfac,vth
 
-        for isp in range(2):
-            # Extract species of interest (0 electrons, 1 ions)
-            mass = ptl_mass[isp]
-            charge = ptl_charge[isp]
 
-            vspace_vol = f0_grid_vol_vonly[isp,:]
-            Tev = f0_T_ev[isp,:]
-            vth=np.sqrt(np.abs(charge)*Tev/mass)
+    def create_f0para(self,f0,isp):
+        """Create parallel distribution function
+        """
+        #discrete cell correction
+        volfac = np.ones((self.vpe.size,self.vpa.size))
+        volfac[0,:]=0.5 #0.5 for where ivpe==0
+        
+        # Extract species of interest (0 electrons, 1 ions)
+        mass = self.ptl_mass[isp]
+        charge = self.ptl_charge[isp]
 
-            #read distribution data
-            f = ad.file('xgc.f0.'+str(ind).zfill(5)+'.bp')
-            if not isp:
-                f0  = f['e_f'][...]
+        vspace_vol = self.f0_grid_vol_vonly[isp,:]
+        return np.einsum('ijk,ik->jk',f0,volfac)*vspace_vol[:,np.newaxis]
+
+
+class xgc1Load(_load):
+    def __init__(self,xgc_path,phi_start=0,phi_end=None,skip_fluc=False,**kwargs):
+        #call parent loading init, including mesh and equilibrium
+        #super().__init__(*args,**kwargs)
+        super(xgc1Load,self).__init__(xgc_path,**kwargs)
+
+        #read in number of planes
+        fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
+        self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
+        # assert isinstance(phi_start,int), "phi_start must be a plane index (Int)"
+        # assert isinstance(phi_end,int), "phi_end must be a plane index (Int)"
+        self.phi_start=int(phi_start)
+        if phi_end is None: phi_end=self.Nplanes-1
+        self.phi_end = int(phi_end)
+        self.Nplanes=self.phi_end-self.phi_start+1
+        
+        if not skip_fluc:
+            print 'Loading fluctuations...'
+            self.loadFluc()
+            print 'fluctuations loaded'
+
+        if not skip_fluc:
+            print 'Loading flux data...'
+            #self.loadf3d()
+            print 'flux surfaces loaded'
+
+
+    def loadFluc(self):
+        """Load non-adiabatic electron density, electrical static 
+        potential fluctuations, and n=0 potential for 3D mesh.
+        The required planes are calculated and stored in sorted array.
+        fluctuation data on each plane is stored in the same order.
+        Note that for full-F runs, the perturbed electron density 
+        includes both turbulent fluctuations and equilibrium relaxation,
+        this loading method doesn't differentiate them and will read all of them.
+        
+        """
+        #from read_fluc_single import read_fluc_single #gives no module error
+        
+        self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        
+        #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
+         #   import adios
+          #  flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+           # dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
+            #pot01 = flucFile['pot0'][rzInds]
+            #eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
+            #return i,dpot1,pot01,eden1
+           
+             
+        def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
+            import adios
+            flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+            dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
+            eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            return i,dpot1,pot01,eden1
+
+        #!/usr/bin python
+
+        import time
+        #start = time.time() #ipyparallel
+        #def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end): #for ipyparallel
+        #    print 'went in method'
+        #    flucFile = openCmd(xgc_path + 'xgc.3d.'+str(i).zfill(5))
+            #flucFile = h5py.File(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.h5')
+        #    start = time.time()
+        #    dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
+        #    pot01 = flucFile['pot0'][rzInds]
+        #    eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
+        #    flucFile.close()
+        #    print 'Read time: '+str(time.time()-start)
+        #    return i,dpot1,pot01,eden1
+
+
+        #try:
+        #import ipyparallel as ipp
+        #print "went into ipyparallel"
+        #rc = ipp.Client()
+
+        #dview = rc[:] #load balanced view cant be used because I need to push data
+        #dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
+        #with dview.sync_imports():
+        #    import adios
+        #    import h5py
+        #    import time
+        #    import sys
+        #    sys.path.append(os.environ['HOME']+'/python_xgc/')
+            #from read_fluc_single import read_fluc_single 
+        #dview.push(dict(xgc_path=self.xgc_path,rzInds=self.rzInds,phi_start=self.phi_start,phi_end=self.phi_end))
+                    #from read_fluc_single import read_fluc_single 
+        #out = dview.map_sync(lambda i: read_fluc_single(i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
+                    
+        #for i in range(self.Ntimes): #self.t_start,self.t_end+1
+        #    _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = out[i]
+        #print 'Read time: '+str(time.time()-start)
+        
+        #except:
+        for i in range(self.Ntimes): 
+            sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+                
+            for i in range(self.Ntimes): #same as the for loop above
+                sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+                f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
+                self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
+                self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
+                self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
+                f.close()
+
+        if self.Nplanes == 1:
+            self.dpot = self.dpot.squeeze()
+            self.eden = self.eden.squeeze()
+
+    def loadf3d(self):
+        #from read_fluc_single import read_fluc_single #gives no module error
+        
+        self.i_T_perp = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.i_E_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.i_u_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.i_den = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_T_perp = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_E_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_u_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+        self.e_den = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
+
+        #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
+         #   import adios
+          #  flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+           # dpot1 = flucFile['dpot'][rzInds,phi_start:(phi_end+1)]
+            #pot01 = flucFile['pot0'][rzInds]
+            #eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
+            #return i,dpot1,pot01,eden1
+        # import time #ipypparallel
+        # start = time.time()
+        # def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end):
+        #     flucFile = openCmd(xgc_path + 'xgc.f3d.'+str(i).zfill(5))
+        #     #flucFile = h5py.File(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.h5')
+            
+        #     i_T_perp = flucFile['i_T_perp'][rzInds,phi_start:(phi_end+1)]
+        #     i_E_para = flucFile['i_E_para'][rzInds,phi_start:(phi_end+1)]
+        #     i_u_para = flucFile['i_u_para'][rzInds,phi_start:(phi_end+1)]
+        #     i_den = flucFile['i_den'][rzInds,phi_start:(phi_end+1)]
+        #     e_T_perp = flucFile['e_T_perp'][rzInds,phi_start:(phi_end+1)]
+        #     e_E_para = flucFile['e_E_para'][rzInds,phi_start:(phi_end+1)]
+        #     e_u_para = flucFile['e_u_para'][rzInds,phi_start:(phi_end+1)]
+        #     e_den = flucFile['e_den'][rzInds,phi_start:(phi_end+1)]
+        #     flucFile.close()
+        #     print 'Read time: '+str(time.time()-start)
+        #     return i_T_perp,i_E_para,i_u_para,i_den,e_T_perp,e_E_para,e_u_para,e_den
+           
+        # import ipyparallel as ipp
+        # print "went into ipyparallel"
+        # rc = ipp.Client()
+
+        # dview = rc[:] #load balanced view cant be used because I need to push data
+        # dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
+        # with dview.sync_imports():
+        #     import adios
+        #     import h5py
+        #     import time
+        #     import sys
+        #     sys.path.append(os.environ['HOME']+'/python_xgc/')
+        #     #from read_fluc_single import read_fluc_single 
+        # dview.push(dict(xgc_path=self.xgc_path,rzInds=self.rzInds,phi_start=self.phi_start,phi_end=self.phi_end))
+        #             #from read_fluc_single import read_fluc_single 
+        # out = dview.map_sync(lambda i: read_fluc_single(i,self.openCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end),range(self.t_start,self.t_end+1))
+                    
+        # for i in range(self.Ntimes): #self.t_start,self.t_end+
+        #     self.i_T_perp[:,:,i],self.i_E_para[:,:,i],self.i_u_para[:,:,i],self.i_den[:,:,i],self.e_T_perp[:,:,i],self.e_E_para[:,:,i],self.e_u_para[:,:,i],self.e_den[:,:,i] = out[i]
+        # print 'Read time: '+str(time.time()-start)
+
+        def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
+           import adios
+           f3dFile = adios.file(xgc_path + 'xgc.f3d.'+str(i).zfill(5)+'.bp')
+           i_T_perp = readCmd(f3dFile,'i_T_perp',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           i_E_para = readCmd(f3dFile,'i_E_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),)  )#[rzInds]
+           i_u_para = readCmd(f3dFile,'i_u_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),)  )#[rzInds]            
+           i_den = readCmd(f3dFile,'i_den',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_T_perp = readCmd(f3dFile,'e_T_perp',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_E_para = readCmd(f3dFile,'e_E_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_u_para = readCmd(f3dFile,'e_u_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           e_den = readCmd(f3dFile,'e_den',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+           return i_T_perp,i_E_para,i_u_para,i_den,e_T_perp,e_E_para,e_u_para,e_den
+        
+        i=0 #read in the last time step file since f3d is not over time
+        sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+        self.i_T_perp[:,:,0],self.i_E_para[:,:,i],self.i_u_para[:,:,0],self.i_den[:,:,0],self.e_T_perp[:,:,0],self.e_E_para[:,:,0],self.e_u_para[:,:,0],self.e_den[:,:,0] = read_fluc_single(self.t_start+i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+                
+
+        #calculate full temperature
+        self.i_T = (self.i_T_perp+(self.i_E_para- (ptl_mass[1]/2*self.i_u_para**2)/(1.609e-19 )))*2./3
+        self.e_T = (self.e_T_perp+(self.e_E_para- (ptl_mass[0]/2*self.e_u_para**2)/(1.609e-19 )))*2./3
+
+    def calcNeTotal(self,psin=None):
+        """Calculate the total electron at the wanted points.
+
+        :param np.array[N] psin
+
+        :returns: Total density
+        :rtype: np.array[N]
+        
+        """
+        
+        if psin is None: psin=self.psin
+
+        # temperature and density (equilibrium) on the psi mesh
+        te0 = splev(psin,self.te0_sp)
+        # avoid temperature <= 0
+        te0[te0<np.min(self.Te1d)/10] = np.min(self.Te1d)/10
+        ne0 = splev(psin,self.ne0_sp)
+        ne0[ne0<np.min(self.ne1d)/10] = np.min(self.ne1d)/10
+        
+
+        #neAdiabatic = ne0*exp(dpot/te0)
+        factAdiabatic = np.exp(np.einsum('i...,i...->i...',self.dpot,1./te0))
+        self.neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
+
+        #ne = neAdiatbatic + dneKinetic
+        self.n_e = self.neAdiabatic + self.eden
+
+        #TODO I've ignored checking whether dne<<ne0, etc. may want to add
+        return self.n_e
+
+    def calcPotential(self):
+        self.pot = self.pot0[:,np.newaxis,:] + self.dpot
+        return self.pot
+
+    def flux_surfaces(self, inds=None): #find flux surfaces
+        if inds is None: inds=range(self.psin.size)
+        global psin_surf
+        global bin_range
+        #bins2 = (bins[1:]+bins[0:-1])/2.
+        #psin_surf = bin2[counts>200]
+        (counts,bins,patches)=plt.hist(self.psin[inds],bins=2000)
+        psin_surf=[]
+        bin_range= [[0 for i in range(2)]]
+        #check theta spread for non aligned points
+        def theta_spread():
+            isin = False
+            psinLower= psin_surf[-1]-0.001
+            psinUpper=psin_surf[-1]+0.001
+            psinTemp=np.array(self.psin)
+            psinIndices=np.where((psinTemp>=psinLower) & (psinTemp<=psinUpper))[0]
+
+            isin = np.any((self.theta[psinIndices]>0) & (self.theta[psinIndices]<180))
+            return isin
+
+        def same_surf(i):
+            global psin_surf
+            global bin_range
+            if (psin_surf.shape[0]!=1) & highCount==True:
+                if (psin_surf[-1]< (psin_surf[-2]+0.001)):
+                    psin_surf[-2]=(psin_surf[-2]+psin_surf[-1])/2
+                    psin_surf=np.delete(psin_surf,-1)
+                else:
+                    bin_range=np.append(bin_range,[[bins[i],bins[i+1]]],0)
+
             else:
-                f0  = f['i_f'][...]
-                f0[f0<0] = 0.
+                bin_range=np.append(bin_range,[[bins[i],bins[i+1]]],0)
 
-            #calculate moments of f0 using einsum for fast(er) calculation
-            den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
-            Vpar2d = vth*np.einsum('k,ijk,ik->j',vpa,f0,volfac)*vspace_vol/den2d
+        highCount=False
+        for i in range(counts.shape[0]):
+            if (counts[i]>200) & (highCount==True):
+                psin_surf=np.append(psin_surf,(bins[i]+bins[i+1])/2)
+                isin= theta_spread()
+                if isin==False:
+                    psin_surf=np.delete(psin_surf,-1)
+                else:
+                    same_surf(i)
+            if (counts[i]>0) & (highCount==False):
+                psin_surf=np.append(psin_surf,(bins[i]+bins[i+1])/2)
+                if counts[i]>=200:
+                    highCount=True
+                isin = theta_spread()
+                if isin==False:
+                    psin_surf=np.delete(psin_surf,-1)
+                else:
+                    same_surf(i)
 
-            prefac = mass/(2.*np.abs(charge))
-            Tpar2d = 2.*prefac*( vth**2.*np.einsum('k,ijk,ik->j',vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
-            Tperp2d = prefac*vth**2.*np.einsum('i,ijk,ik->j',vpe**2.,f0,volfac)*vspace_vol/den2d
-            T2d = (Tpar2d + 2.*Tperp2d)/3.
+        bin_range=bin_range[1:,:]
+        return psin_surf,bin_range
 
-            if not isp:
-                ne2d = den2d
-                Vepar2d = Vpar2d
-                Te2d = T2d
-                Tepar2d = Tpar2d
-                Teperp2d = Tperp2d
-            else:
-                ni2d = den2d
-                Vipar2d = Vpar2d
-                Ti2d = T2d
-                Tipar2d = Tpar2d
-                Tiperp2d = Tperp2d
 
-        return (ne2d,Vepar2d,Te2d,Tepar2d,Teperp2d,ni2d,Vipar2d,Ti2d,Tipar2d,Tiperp2d)
+    def hist2dline1(self,x,y,bins,range=None,cmap='Reds',minmax=False):
+        x = x.flatten()
+        y = y.flatten()
+        goodInds = np.where( ~np.isnan(x) & ~np.isnan(y) )[0]
+        (cnts,xedges,yedges) = np.histogram2d(x[goodInds],y[goodInds],bins=bins,range=range)
+        return cnts, xedges,yedges
+
+    def hist2dline2(self,x,y,bins,range=None,cmap='Reds',minmax=False):
+        x = x.flatten()
+        y = y.flatten()
+        goodInds = np.where( ~np.isnan(x) & ~np.isnan(y) )[0]
+        (cnts,xedges,yedges) = np.histogram2d(x[goodInds],y[goodInds],bins=bins,range=range)
+        xedgeMid = (xedges[1::] + xedges[:-1])/2.
+        yedgeMid = (yedges[1::] + yedges[:-1])/2.
+        yAvg = np.sum(yedgeMid[np.newaxis,:]*cnts,axis=1)/np.sum(cnts,axis=1)
+        dMin=[]
+        dMax=[]
+        if minmax:
+            dMin = np.empty((xedges.size-1,))
+            dMax = np.empty((xedges.size-1,))
+            for i in np.arange(xedges.size-1):
+                if (y[(x>=xedges[i]) & (x<xedges[i+1])].size==0):
+                    print i
+                    dMin[i]=np.nan
+                    dMax[i]=np.nan
+                else:
+                    dMin[i] = y[(x>=xedges[i]) & (x<xedges[i+1])].min()
+                    dMax[i] = y[(x>=xedges[i]) & (x<xedges[i+1])].max()
+            for i in np.arange(xedges.size-1):
+                if np.isnan(dMin[i])==True:
+                    dMin[i]=(dMin[i-1]+dMin[i+1])/2
+                    dMax[i]=(dMax[i-1]+dMax[i+1])/2
+            plt.plot(xedgeMid,dMin,'k--',xedgeMid,dMax,'k--')
+        return xedgeMid,yAvg,dMin,dMax
+    def kfSpectrum(self,L,time,frames,noNormalize=False, noFilter=False, window=None):
+
+        if window is not None:
+            #default to Hanning, add others later
+            wL=0.5*(1-np.cos(2.*np.pi*np.arange(L.size)/L.size))
+            wTime=0.5*(1-np.cos(2.*np.pi*np.arange(time.size)/time.size))
+            win2 = wL[:,np.newaxis]*wTime[np.newaxis,:] #or should this be matrix mult?
+            frames = frames*win2
+
+        NFFT = 2**np.ceil(np.log2(frames.shape[0:2])).astype(int)
+        # %%%Create k and f arrays
+        # %create frequency array
+        Fs=1./np.mean(np.diff(time));
+        f=Fs/2*np.linspace(0,1,NFFT[1]/2+1) # %highest frequency 0.5 sampling rate (Nyquist)
+
+        # %METHOD 1: No anti-aliasing
+        # %create k array
+        kmax=np.pi/np.min(np.diff(L))
+        k=kmax*np.linspace(-1,1,NFFT[0])
+        kfspec=np.fft.fftshift(np.fft.ifft(np.fft.fft(frames,n=NFFT[1],axis=1),n=NFFT[0],axis=0))  #%fftshift since Matlab puts positive frequencies first
+        kfspec=kfspec[:,NFFT[1]/2-1:,...]
+
+        # % %METHOD 2: Anti-aliasing
+        # % kfspec=fftshift(fft(frames,NFFT(2),2));
+        # % %for now, remove negative frequency components
+        # % kfspec=kfspec(:,NFFT(2)/2:end);
+        # % kmin=pi/(L(end)-L(1));
+        # % kmax=pi/min(diff(L))*0.85;
+        # % k=[linspace(-kmax,-kmin,NFFT(1)/2-1) 0 linspace(kmin,kmax,NFFT(1)/2)];
+        # % kfspec=exp(i*k(:)*L(:)')*kfspec;
+
+        # %%%normalize, S(k|w)=S(k,w)/S(w)
+        if not noNormalize:
+            kfspec=np.abs(kfspec)/np.sum(np.abs(kfspec),axis=0)[np.newaxis,:]
+
+        # %%%OPTIONAL: filtering (smooths images)
+        if not noFilter:
+            kfspec = gaussian_filter(np.abs(kfspec), sigma=5)
+
+        return k,f,kfspec
+
+
+class xgcaLoad(_load):
+    def __init__(self,xgc_path,**kwargs):
+        #call parent loading init, including mesh and equilibrium
+        #super().__init__(*args,**kwargs)
+        super(xgcaLoad,self).__init__(xgc_path,**kwargs)
+
+        print 'Loading f0 data...'
+        self.loadf0mesh()
+        print 'f0 data loaded'
+
+    def load2D():
+        self.iden = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        
+        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.epsi = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.etheta = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        
+        
+        for i in range(self.Ntimes):
+            flucFile = self.xgc_path + 'xgc.2d.'+str(t_start+i).zfill(5)
+
+            self.iden[:,i] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
+
+            self.dpot[:,i] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
+            self.pot0[:,i] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
+            self.epsi[:,i] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
+            self.etheta[:,i] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
+
+
 
 
 class gengridLoad():
