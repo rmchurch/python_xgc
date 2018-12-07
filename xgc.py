@@ -77,13 +77,13 @@ class _load(object):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
-                return x[v][...][inds]       
+                return x[v][inds]       
             else:
                 f = openAdios(x)
                 data = f[v][inds]
                 f.close()
                 return data
-
+        
         def openHDF5(x):
             return h5py.File(str(x)+'.h5','r')
         def readHDF5(x,v,inds=Ellipsis):
