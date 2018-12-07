@@ -385,8 +385,8 @@ class _load(object):
             idx = np.arange(step[0]/dstep,step[-1]/dstep+1)
             
             mask1d = np.zeros(idx.shape,dtype=np.int32)
-            for i in idx:
-                mask1d[i-1] = np.where(step == i*dstep)[0][-1] #get last occurence
+            for (i,idxi) in enumerate(idx):
+                mask1d[i] = np.where(step == idxi*dstep)[0][-1] #get last occurence
         except:
             mask1d = Ellipsis #pass variables unaffected
         
