@@ -294,8 +294,10 @@ class _load(object):
             self.tri = tri
         
         self.triObj = Triangulation(self.RZ[:,0],self.RZ[:,1],self.tri)
-
-
+        
+        self.flux_surfaces()
+        
+        
     def load_oneddiag(self):
         """Load all oneddiag quantities. Rename required equilibrium profiles and compute the interpolant
         """
@@ -379,9 +381,9 @@ class _load(object):
         try:
             step = self.readCmd(self.oneddiag_file,'step')
             dstep = step[1] - step[0]
-        
+            
             idx = np.arange(step[0]/dstep,step[-1]/dstep+1)
-        
+            
             mask1d = np.zeros(idx.shape,dtype=np.int32)
             for i in idx:
                 mask1d[i-1] = np.where(step == i*dstep)[0][-1] #get last occurence
@@ -389,7 +391,24 @@ class _load(object):
             mask1d = Ellipsis #pass variables unaffected
         
         return mask1d
-
+    
+    
+    def flux_surfaces(self): 
+        psin_surf = []
+        nextnodes = []
+        nextnode = 0
+        while ~np.any(self.wall_nodes==nextnode):
+            psin_surf += [self.psin[nextnode]]
+            nextnodes += [nextnode]
+            inds = np.where(self.triObj.edges==nextnode)
+            #inds is (Npts,2) array, and nextnode could appear in either.
+            #what we want is not where nextnode appears, but where its neighbor is
+            #so flip inds[1] (these are all 0 or 1, so you want the other index for the neighbor)
+            possiblenodes = self.triObj.edges[inds[0],~inds[1]]
+            nextnode = possiblenodes[np.argmax(self.RZ[possiblenodes,0])]
+        self.psin_surf = np.array(psin_surf)
+    
+    
     def calc_bary(self,R,Z):
         """Given points, calculate their barycentric coordinates"""
         #find triangles corresponding to R,Z position. Equivalent to tr_save in XGC1
@@ -721,84 +740,29 @@ class xgc1Load(_load):
         ne0 = splev(psin,self.ne0_sp)
         ne0[ne0<np.min(self.ne1d)/10] = np.min(self.ne1d)/10
         
-
+        
         #neAdiabatic = ne0*exp(dpot/te0)
         factAdiabatic = np.exp(np.einsum('i...,i...->i...',self.dpot,1./te0))
         self.neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
-
+        
         #ne = neAdiatbatic + dneKinetic
         self.n_e = self.neAdiabatic + self.eden
-
+        
         #TODO I've ignored checking whether dne<<ne0, etc. may want to add
         return self.n_e
-
+    
     def calcPotential(self):
         self.pot = self.pot0[:,np.newaxis,:] + self.dpot
         return self.pot
-
-    def flux_surfaces(self, inds=None): #find flux surfaces
-        if inds is None: inds=range(self.psin.size)
-        global psin_surf
-        global bin_range
-        #bins2 = (bins[1:]+bins[0:-1])/2.
-        #psin_surf = bin2[counts>200]
-        (counts,bins,patches)=plt.hist(self.psin[inds],bins=2000)
-        psin_surf=[]
-        bin_range= [[0 for i in range(2)]]
-        #check theta spread for non aligned points
-        def theta_spread():
-            isin = False
-            psinLower= psin_surf[-1]-0.001
-            psinUpper=psin_surf[-1]+0.001
-            psinTemp=np.array(self.psin)
-            psinIndices=np.where((psinTemp>=psinLower) & (psinTemp<=psinUpper))[0]
-
-            isin = np.any((self.theta[psinIndices]>0) & (self.theta[psinIndices]<180))
-            return isin
-
-        def same_surf(i):
-            global psin_surf
-            global bin_range
-            if (psin_surf.shape[0]!=1) & highCount==True:
-                if (psin_surf[-1]< (psin_surf[-2]+0.001)):
-                    psin_surf[-2]=(psin_surf[-2]+psin_surf[-1])/2
-                    psin_surf=np.delete(psin_surf,-1)
-                else:
-                    bin_range=np.append(bin_range,[[bins[i],bins[i+1]]],0)
-
-            else:
-                bin_range=np.append(bin_range,[[bins[i],bins[i+1]]],0)
-
-        highCount=False
-        for i in range(counts.shape[0]):
-            if (counts[i]>200) & (highCount==True):
-                psin_surf=np.append(psin_surf,(bins[i]+bins[i+1])/2)
-                isin= theta_spread()
-                if isin==False:
-                    psin_surf=np.delete(psin_surf,-1)
-                else:
-                    same_surf(i)
-            if (counts[i]>0) & (highCount==False):
-                psin_surf=np.append(psin_surf,(bins[i]+bins[i+1])/2)
-                if counts[i]>=200:
-                    highCount=True
-                isin = theta_spread()
-                if isin==False:
-                    psin_surf=np.delete(psin_surf,-1)
-                else:
-                    same_surf(i)
-
-        bin_range=bin_range[1:,:]
-        return psin_surf,bin_range
-
-
+    
+    
     def hist2dline1(self,x,y,bins,range=None,cmap='Reds',minmax=False):
         x = x.flatten()
         y = y.flatten()
         goodInds = np.where( ~np.isnan(x) & ~np.isnan(y) )[0]
         (cnts,xedges,yedges) = np.histogram2d(x[goodInds],y[goodInds],bins=bins,range=range)
         return cnts, xedges,yedges
-
+    
     def hist2dline2(self,x,y,bins,range=None,cmap='Reds',minmax=False):
         x = x.flatten()
         y = y.flatten()
