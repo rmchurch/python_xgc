@@ -236,6 +236,7 @@ class _load(object):
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
         theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
+        self.theta_x = 180./np.pi*np.arctan2(self.unit_dic['eq_x_z']-self.unit_dic['eq_axis_z'],self.unit_dic['eq_x_r']-self.unit_dic['eq_axis_r'])
         try:
             wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index. Usually for XGCa
         except:
@@ -564,10 +565,8 @@ class xgc1Load(_load):
             pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
             eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
             return i,dpot1,pot01,eden1
-
-        #!/usr/bin python
-
-        import time
+        
+        #import time
         #start = time.time() #ipyparallel
         #def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end): #for ipyparallel
         #    print 'went in method'
