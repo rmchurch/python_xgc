@@ -411,20 +411,28 @@ class _load(object):
     
     def calc_bary(self,R,Z):
         """Given points, calculate their barycentric coordinates"""
+        p = np.zeros(R.shape+(3,))
+        trii = np.zeros(R.shape+(3,),dtype=int)-1
+        
         #find triangles corresponding to R,Z position. Equivalent to tr_save in XGC1
-        finder = self.triObj.get_trifinder()
-        trii = self.triObj.triangles[finder(R,Z),:]
-
+        if ~hasattr(self,'trifinder'):
+            self.trifinder = self.triObj.get_trifinder()
+        indtri = self.trifinder(R,Z)
+        #exclude out of bounds triangles (indtri==-1)
+        ininds = np.where(indtri>-1)[0]
+        #get triangles vertices these points are enclosed by
+        trii[ininds,:] = self.triObj.triangles[indtri[ininds],:]
+        
         #next, grab the vertices of these triangles, and put into an array T=[[x1,x2,x3],[y1,y2,y3],[1,1,1]],
         #and stack the regular grid into xi=[R,Z,1]
-        x = self.triObj.x[trii]
-        y = self.triObj.y[trii]
+        x = self.triObj.x[trii[ininds,:]]
+        y = self.triObj.y[trii[ininds,:]]
         T = np.concatenate( (x[...,np.newaxis],y[...,np.newaxis],np.ones(x.shape)[...,np.newaxis]),axis=2).swapaxes(1,2)
-        xi = np.concatenate( (R[...,np.newaxis],Z[...,np.newaxis],np.ones(R.shape)[...,np.newaxis]),axis=1)
+        xi = np.concatenate( (R[ininds,np.newaxis],Z[ininds,np.newaxis],np.ones(R[ininds].shape)[...,np.newaxis]),axis=1)
         #finally, solve system T bary = xi
-        return np.linalg.solve(T,xi)
-
-
+        p[ininds,:] = np.linalg.solve(T,xi)
+        return p,trii
+    
     def loadf0mesh(self):
         ##f0 mesh data
         self.f0mesh_file = self.xgc_path+'xgc.f0.mesh'
