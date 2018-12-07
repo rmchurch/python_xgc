@@ -26,16 +26,16 @@ from scipy import stats
 #convenience gateway to load XGC1 or XGCa data
 def load(*args,**kwargs):
     file_path = os.path.join(args[0],'')
-
+    
     if len(glob.glob(file_path+'xgc.3d*')) > 0:
         return xgc1Load(*args,**kwargs)
     
     elif len(glob.glob(file_path+'xgc.2d*')) > 0:
         return xgcaLoad(*args,**kwargs)
-
+    
     else:
         raise ValueError('XGC files not found in '+file_path)
-
+    
 
 class _load(object):
     """Loader class for general use.
@@ -61,7 +61,7 @@ class _load(object):
 
     :param str kind: Order of the interpolation method (linear or cubic))
     """
-
+    
     def __init__(self,xgc_path,t_start=1,t_end=None,dt=1,
         Rmin=None,Rmax=None,Zmin=None,Zmax=None,
         psinMin=None,psinMax=None,thetaMin=None,thetaMax=None, 
@@ -94,7 +94,7 @@ class _load(object):
                 data = f[v][inds]
                 f.close()
                 return data
-
+        
         print 'Loading XGC output data'
         
         self.xgc_path = os.path.join(xgc_path,'')  #get file_path, add path separator if not there
@@ -110,15 +110,15 @@ class _load(object):
             self.readCmd=readHDF5
         else:
             raise ValueError('No xgc.mesh file found')
-
+        
         print 'from directory:'+ self.xgc_path
         #read in units file
         self.unit_file = self.xgc_path+'units.m'
         self.unit_dic = self.load_m(self.unit_file)
-
+        
         self.inputused_file = self.xgc_path+'fort.input.used'
         self.ptl_mass,self.ptl_charge = self.load_mass_charge(self.inputused_file)
-
+        
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
@@ -133,10 +133,10 @@ class _load(object):
         self.time_steps = np.arange(self.t_start,self.t_end+1,dt) #1-based for file names
         self.tstep = self.unit_dic['sml_dt']*self.unit_dic['diag_1d_period']
         self.Ntimes = len(self.time)
-
+        
         #magnetics file
         self.bfield_file=self.xgc_path+'xgc.bfield'
-
+        
         # limits of the mesh in tokamak coordinates. Set to min,max of arrays in loadMesh()
         #if unspecified by user
         self.Rmin = self.unit_dic['eq_x_r'] if 'x' in str(Rmin).lower() else Rmin
@@ -145,10 +145,10 @@ class _load(object):
         self.Zmax = self.unit_dic['eq_x_z'] if 'x' in str(Zmax).lower() else Zmax
         self.psinMin=psinMin
         self.psinMax=psinMax
-
+        
         self.thetaMin=thetaMin
         self.thetaMax=thetaMax
-
+        
         self.kind = kind
         
         
@@ -156,7 +156,7 @@ class _load(object):
         print 'Loading mesh and psi...'
         self.loadMesh()
         print '\tmesh and psi loaded.'
-
+        
         #TODO: This isnt right yet, need to instead find saddlepoint
         #could do using gradient in LinearTriinterpolator or Cubic 
         #some units.m dont have eq_x_r,eq_x_z, approximate
@@ -180,9 +180,9 @@ class _load(object):
             print '\tequlibrium loaded.'
         else:
             print 'Skipping equilibrium...'
-
-
-
+    
+    
+    
     
     def load_m(self,fname):
         """load the whole .m file and return a dictionary contains all the entries.
@@ -196,8 +196,8 @@ class _load(object):
             result[key]= float(value)
         f.close()
         return result
-
-
+    
+    
     def load_mass_charge(self,fname):
         """load particle masses from fort.input.used (currently ptl_e_mass_au not in units.m
         """
@@ -222,7 +222,7 @@ class _load(object):
         except:
             pass            
         return ptl_mass,ptl_charge#will return default values
-
+    
     def loadMesh(self):
         """load R-Z mesh and psi values, then create map between each psi 
            value and the series of points on that surface.
@@ -244,8 +244,8 @@ class _load(object):
                 wall_nodes = self.readCmd(self.mesh_file,'psn_wall_nodes')-1 #-1 for 0-based index. This is sometimes for XGC1
             except:
                 print 'no wall_nodes'
-		wall_nodes = np.array([-1])
-    
+                wall_nodes = np.array([-1])
+        
         # set limits if not user specified
         if self.Rmin is None: self.Rmin=np.min(R)
         if self.Rmax is None: self.Rmax=np.max(R)
@@ -255,13 +255,13 @@ class _load(object):
         if self.psinMax is None: self.psinMax=np.max(psin)
         if self.thetaMin is None: self.thetaMin=np.min(theta)
         if self.thetaMax is None: self.thetaMax=np.max(theta)
-
+        
         #limit to the user-input ranges        
         self.rzInds = ( (R>=self.Rmin) & (R<=self.Rmax) & 
             (Z>=self.Zmin) & (Z<=self.Zmax) & 
             (psin>=self.psinMin) & (psin<=self.psinMax) &
             (theta>=self.thetaMin) & (theta<=self.thetaMax) )
-
+        
         self.RZ = RZ[self.rzInds,:]
         self.psin = psin[self.rzInds]
         self.node_vol = node_vol[self.rzInds]
@@ -278,7 +278,7 @@ class _load(object):
                 self.RZ, self.psin, fill_value=fill_)
         else:
             raise NameError("The method '{}' is not defined".format(self.kind))        
-
+        
         #get the triangles which are all contained within the vertices defined by
         #the indexes igrid
         #find which triangles are in the defined spatial region
@@ -292,14 +292,14 @@ class _load(object):
                 self.tri[self.tri==indices[i]]=i
         else:
             self.tri = tri
-
+        
         self.triObj = Triangulation(self.RZ[:,0],self.RZ[:,1],self.tri)
 
 
     def load_oneddiag(self):
         """Load all oneddiag quantities. Rename required equilibrium profiles and compute the interpolant
         """
-
+        
         #read in all data from xgc.oneddiag
         f1d = self.openCmd(self.oneddiag_file)
         oneddiag={}
@@ -314,12 +314,12 @@ class _load(object):
             if data.ndim==2: data = data[self.mask1d,:]
             oneddiag[key]=data
         self.oneddiag = oneddiag
-
+        
         #TODO: Decide if should remove this legacy renaming
         #modify 1d psin data
         self.psin1d = self.oneddiag['psi']
         if self.psin1d.ndim > 1: self.psin1d = self.psin1d[0,:]
-
+        
         #read n=0,m=0 potential
         try:
             self.psin001d = self.oneddiag['psi00_1d']/self.unit_dic['psi_x']
@@ -356,13 +356,13 @@ class _load(object):
                 self.Te1d=(etemp_par+etemp_per)*2./3
                 #read electron density
                 self.ne1d = np.apply_along_axis(lambda a: np.interp(self.psin1d,self.psin001d,a),1,self.pot001d)/self.Te1d
-
+        
         #create splines for t=0 data
         self.ti0_sp = splrep(self.psin1d,self.Ti1d[0,:],k=1)
         self.te0_sp = splrep(self.psin1d,self.Te1d[0,:],k=1)
         self.ne0_sp = splrep(self.psin1d,self.ne1d[0,:],k=1)
         
-
+    
     def loadBfield(self):
         """Load magnetic field
         """
@@ -370,7 +370,8 @@ class _load(object):
             self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
         except:
             self.bfield = self.readCmd(self.bfield_file,'bfield')[self.rzInds,:]
-
+        
+        
     def oned_mask(self):
         """Match oned data to 3d files, in cases of restart.
            Use this on oneddiag variables, e.g. n_e1d = ad.file('xgc.oneddiag.bp','e_gc_density_1d')[mask1d,:]
@@ -423,10 +424,10 @@ class _load(object):
         self.f0_T_ev = self.readCmd(self.f0mesh_file,'f0_T_ev')
         self.f0_Te = self.f0_T_ev[0,:]
         self.f0_Ti = self.f0_T_ev[1,:]
-
+        
         self.f0_grid_vol_vonly = self.readCmd(self.f0mesh_file,'f0_grid_vol_vonly')
-
-
+        
+        
     def create_vpa_vpe_grid(self,f0_nvp, f0_nmu, f0_vp_max, f0_smu_max):
         """Create velocity grid vectors"""
         vpe=np.linspace(0,f0_smu_max,f0_nmu+1) #dindgen(nvpe+1)/(nvpe)*vpemax
@@ -434,43 +435,43 @@ class _load(object):
         vpe1[0]=vpe[1]/3.
         vpa=np.linspace(-f0_vp_max,f0_vp_max,2*f0_nvp+1)
         return (vpa, vpe, vpe1)
-
+    
             
     ######## ANALYSIS ###################################################################
     def calcMoments(self,ind=1):
         """Calculate moments from the f0 data
         """
-
+    
         self.f0_file = self.xgc_path + 'xgc.f0.'+str(ind).zfill(5)
         #read distribution data
         e_f  = self.readCmd(self.f0_file,'e_f')[:,self.rzInds,:]
         i_f  = self.readCmd(self.f0_file,'i_f')[:,self.rzInds,:]
-
+        
         self.ne2d,self.Vepar2d,self.Te2d,self.Tepar2d,self.Teperp2d = self.calcMoments1(e_f,0)
         self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar2d,self.Tiperp2d = self.calcMoments1(i_f,1)
         #TODO: Add calculation for fluxes, Vpol (requires more info)
-
+        
         return (self.ne2d,self.Vepar2d,self.Te2d,self.Tepar2d,self.Teperp2d,\
                 self.ni2d,self.Vipar2d,self.Ti2d,self.Tipar2d,self.Tiperp2d)
-
-
-
+    
+    
+    
     def calcMoments1(self,f0,isp):
         """Calculate moments from the f0 data
         """
         mass,charge,vspace_vol,volfac,vth = self.moments_params(isp)
-
+        
         #calculate moments of f0 using einsum for fast(er) calculation
         den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
         Vpar2d = vth*np.einsum('k,ijk,ik->j',self.vpa,f0,volfac)*vspace_vol/den2d
-
+        
         prefac = mass/(2.*np.abs(charge))
         Tpar2d = 2.*prefac*( vth**2.*np.einsum('k,ijk,ik->j',self.vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
         Tperp2d = prefac*vth**2.*np.einsum('i,ijk,ik->j',self.vpe**2.,f0,volfac)*vspace_vol/den2d
         T2d = (Tpar2d + 2.*Tperp2d)/3.
-
+        
         return (den2d,Vpar2d,T2d,Tpar2d,Tperp2d)
-
+    
     def moments_params(self,isp):
         """Return mass,charge,velocity space volume,discrete cell correction, and thermal velocity
         """
@@ -478,7 +479,7 @@ class _load(object):
         # Extract species of interest (0 electrons, 1 ions)
         mass = self.ptl_mass[isp]
         charge = self.ptl_charge[isp]
-
+        
         vspace_vol = self.f0_grid_vol_vonly[isp,:]
         
         #discrete cell correction
@@ -489,8 +490,8 @@ class _load(object):
         vth=np.sqrt(np.abs(charge)*Tev/mass)
         
         return mass,charge,vspace_vol,volfac,vth
-
-
+    
+    
     def create_f0para(self,f0,isp):
         """Create parallel distribution function
         """
@@ -501,17 +502,18 @@ class _load(object):
         # Extract species of interest (0 electrons, 1 ions)
         mass = self.ptl_mass[isp]
         charge = self.ptl_charge[isp]
-
+        
         vspace_vol = self.f0_grid_vol_vonly[isp,:]
         return np.einsum('ijk,ik->jk',f0,volfac)*vspace_vol[:,np.newaxis]
-
-
+        
+        
+    
 class xgc1Load(_load):
     def __init__(self,xgc_path,phi_start=0,phi_end=None,skip_fluc=False,**kwargs):
         #call parent loading init, including mesh and equilibrium
         #super().__init__(*args,**kwargs)
         super(xgc1Load,self).__init__(xgc_path,**kwargs)
-
+        
         #read in number of planes
         fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
         self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
@@ -526,13 +528,13 @@ class xgc1Load(_load):
             print 'Loading fluctuations...'
             self.loadFluc()
             print 'fluctuations loaded'
-
+        
         if not skip_fluc:
             print 'Loading flux data...'
             #self.loadf3d()
             print 'flux surfaces loaded'
-
-
+    
+    
     def loadFluc(self):
         """Load non-adiabatic electron density, electrical static 
         potential fluctuations, and n=0 potential for 3D mesh.
@@ -579,13 +581,13 @@ class xgc1Load(_load):
         #    flucFile.close()
         #    print 'Read time: '+str(time.time()-start)
         #    return i,dpot1,pot01,eden1
-
-
+        
+        
         #try:
         #import ipyparallel as ipp
         #print "went into ipyparallel"
         #rc = ipp.Client()
-
+        
         #dview = rc[:] #load balanced view cant be used because I need to push data
         #dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
         #with dview.sync_imports():
@@ -631,7 +633,7 @@ class xgc1Load(_load):
         self.e_E_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
         self.e_u_para = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
         self.e_den = np.zeros( (len(self.RZ[:,0]), self.Nplanes,self.Ntimes) )
-
+        
         #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
          #   import adios
           #  flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
@@ -660,7 +662,7 @@ class xgc1Load(_load):
         # import ipyparallel as ipp
         # print "went into ipyparallel"
         # rc = ipp.Client()
-
+        
         # dview = rc[:] #load balanced view cant be used because I need to push data
         # dview.use_dill() #before was getting pickle error for Ellipsis, not sure where the Ellipsis is
         # with dview.sync_imports():
@@ -677,7 +679,7 @@ class xgc1Load(_load):
         # for i in range(self.Ntimes): #self.t_start,self.t_end+
         #     self.i_T_perp[:,:,i],self.i_E_para[:,:,i],self.i_u_para[:,:,i],self.i_den[:,:,i],self.e_T_perp[:,:,i],self.e_E_para[:,:,i],self.e_u_para[:,:,i],self.e_den[:,:,i] = out[i]
         # print 'Read time: '+str(time.time()-start)
-
+        
         def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
            import adios
            f3dFile = adios.file(xgc_path + 'xgc.f3d.'+str(i).zfill(5)+'.bp')
@@ -695,23 +697,23 @@ class xgc1Load(_load):
         sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
         self.i_T_perp[:,:,0],self.i_E_para[:,:,i],self.i_u_para[:,:,0],self.i_den[:,:,0],self.e_T_perp[:,:,0],self.e_E_para[:,:,0],self.e_u_para[:,:,0],self.e_den[:,:,0] = read_fluc_single(self.t_start+i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
                 
-
+        
         #calculate full temperature
         self.i_T = (self.i_T_perp+(self.i_E_para- (ptl_mass[1]/2*self.i_u_para**2)/(1.609e-19 )))*2./3
         self.e_T = (self.e_T_perp+(self.e_E_para- (ptl_mass[0]/2*self.e_u_para**2)/(1.609e-19 )))*2./3
-
+        
     def calcNeTotal(self,psin=None):
         """Calculate the total electron at the wanted points.
-
+    
         :param np.array[N] psin
-
+    
         :returns: Total density
         :rtype: np.array[N]
         
         """
         
         if psin is None: psin=self.psin
-
+        
         # temperature and density (equilibrium) on the psi mesh
         te0 = splev(psin,self.te0_sp)
         # avoid temperature <= 0
@@ -825,27 +827,27 @@ class xgc1Load(_load):
             plt.plot(xedgeMid,dMin,'k--',xedgeMid,dMax,'k--')
         return xedgeMid,yAvg,dMin,dMax
     def kfSpectrum(self,L,time,frames,noNormalize=False, noFilter=False, window=None):
-
+        
         if window is not None:
             #default to Hanning, add others later
             wL=0.5*(1-np.cos(2.*np.pi*np.arange(L.size)/L.size))
             wTime=0.5*(1-np.cos(2.*np.pi*np.arange(time.size)/time.size))
             win2 = wL[:,np.newaxis]*wTime[np.newaxis,:] #or should this be matrix mult?
             frames = frames*win2
-
+        
         NFFT = 2**np.ceil(np.log2(frames.shape[0:2])).astype(int)
         # %%%Create k and f arrays
         # %create frequency array
         Fs=1./np.mean(np.diff(time));
         f=Fs/2*np.linspace(0,1,NFFT[1]/2+1) # %highest frequency 0.5 sampling rate (Nyquist)
-
+        
         # %METHOD 1: No anti-aliasing
         # %create k array
         kmax=np.pi/np.min(np.diff(L))
         k=kmax*np.linspace(-1,1,NFFT[0])
         kfspec=np.fft.fftshift(np.fft.ifft(np.fft.fft(frames,n=NFFT[1],axis=1),n=NFFT[0],axis=0))  #%fftshift since Matlab puts positive frequencies first
         kfspec=kfspec[:,NFFT[1]/2-1:,...]
-
+        
         # % %METHOD 2: Anti-aliasing
         # % kfspec=fftshift(fft(frames,NFFT(2),2));
         # % %for now, remove negative frequency components
@@ -854,28 +856,28 @@ class xgc1Load(_load):
         # % kmax=pi/min(diff(L))*0.85;
         # % k=[linspace(-kmax,-kmin,NFFT(1)/2-1) 0 linspace(kmin,kmax,NFFT(1)/2)];
         # % kfspec=exp(i*k(:)*L(:)')*kfspec;
-
+        
         # %%%normalize, S(k|w)=S(k,w)/S(w)
         if not noNormalize:
             kfspec=np.abs(kfspec)/np.sum(np.abs(kfspec),axis=0)[np.newaxis,:]
-
+        
         # %%%OPTIONAL: filtering (smooths images)
         if not noFilter:
             kfspec = gaussian_filter(np.abs(kfspec), sigma=5)
-
+        
         return k,f,kfspec
-
-
+    
+    
 class xgcaLoad(_load):
     def __init__(self,xgc_path,**kwargs):
         #call parent loading init, including mesh and equilibrium
         #super().__init__(*args,**kwargs)
         super(xgcaLoad,self).__init__(xgc_path,**kwargs)
-
+        
         print 'Loading f0 data...'
         self.loadf0mesh()
         print 'f0 data loaded'
-
+    
     def load2D():
         self.iden = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
@@ -887,21 +889,21 @@ class xgcaLoad(_load):
         
         for i in range(self.Ntimes):
             flucFile = self.xgc_path + 'xgc.2d.'+str(t_start+i).zfill(5)
-
+            
             self.iden[:,i] = self.readCmd(flucFile,'iden',inds=(self.rzInds,))#[self.rzInds]
-
+            
             self.dpot[:,i] = self.readCmd(flucFile,'dpot',inds=(self.rzInds,))#[self.rzInds]
             self.pot0[:,i] = self.readCmd(flucFile,'pot0',inds=(self.rzInds,))#[self.rzInds]
             self.epsi[:,i] = self.readCmd(flucFile,'epsi',inds=(self.rzInds,))#[self.rzInds]
             self.etheta[:,i] = self.readCmd(flucFile,'etheta',inds=(self.rzInds,))#[self.rzInds]
-
-
-
-
+            
+            
+            
+            
 class gengridLoad():
     def __init__(self,file_path):
         self.file_path = file_path
-
+        
         #read in the grid data from node file
         #TODO Read in ele and poly components also
         f = open(self.file_path,'r')
