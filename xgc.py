@@ -651,18 +651,18 @@ class xgc1Load(_load):
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
             _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
                 
-            for i in range(self.Ntimes): #same as the for loop above
-                sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-                f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
-                self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
-                self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
-                self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
-                f.close()
-
+        #for i in range(self.Ntimes): #same as the for loop above
+        #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+        #    f = self.openCmd(self.xgc_path+'xgc.3d.'+str(i+1).zfill(5))
+        #    self.dpot[:,:,i] = self.readCmd(f,'dpot')[self.rzInds,self.phi_start:(self.phi_end+1)]
+        #    self.eden[:,:,i] = self.readCmd(f,'eden')[self.rzInds,self.phi_start:(self.phi_end+1)]
+        #    self.pot0[:,i] = self.readCmd(f,'pot0')[self.rzInds]
+        #    f.close()
+        
         if self.Nplanes == 1:
             self.dpot = self.dpot.squeeze()
             self.eden = self.eden.squeeze()
-
+    
     def loadf3d(self):
         #from read_fluc_single import read_fluc_single #gives no module error
         
