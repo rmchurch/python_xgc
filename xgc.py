@@ -433,6 +433,20 @@ class _load(object):
         p[ininds,:] = np.linalg.solve(T,xi)
         return p,trii
     
+    
+    def fluxAvg(self,data,psin_inds=None):
+        if psin_inds is None: psin_inds = np.arange(self.psin_surf.size,dtype=int) 
+        dataAvg = np.zeros((psin_inds.size,))
+        for (i,p) in enumerate(self.psin_surf[psin_inds]):
+            pinds = np.where(np.abs(self.psin-p)<1e-4)[0]
+            if p<1:pinds = pinds[self.RZ[pinds,1]>self.unit_dic['eq_x_z']]
+            dataAvg[i] = self.flux_section_avg(data,pinds)
+        return dataAvg
+    
+    def flux_section_avg(self,data,pinds):
+        return np.sum(data[pinds,:]*self.node_vol[pinds,np.newaxis])/np.sum(self.node_vol[pinds]*data.shape[1])
+    
+    
     def loadf0mesh(self):
         ##f0 mesh data
         self.f0mesh_file = self.xgc_path+'xgc.f0.mesh'
