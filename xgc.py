@@ -476,6 +476,21 @@ class _load(object):
         vpe1[0]=vpe[1]/3.
         vpa=np.linspace(-f0_vp_max,f0_vp_max,2*f0_nvp+1)
         return (vpa, vpe, vpe1)
+
+    def create_sparse_xgc(nelement,eindex,value):
+        """Create Python sparse matrix from XGC data"""
+        from scipy.sparse import csr_matrix
+
+        #format for Python sparse matrix
+        indptr = np.insert(np.cumsum(nelement),0,0)
+        indices = np.empty((indptr[-1],))
+        data = np.empty((indptr[-1],))
+        for i in range(nelement.size):
+                indices[indptr[i]:indptr[i+1]] = eindex[i,0:nelement[i]]
+                data[indptr[i]:indptr[i+1]] = value[i,0:nelement[i]]
+        #create sparse matrices
+        spmat = csr_matrix((data,indices,indptr),shape=(nelement.size,nelement.size))
+        return spmat
     
             
     ######## ANALYSIS ###################################################################
