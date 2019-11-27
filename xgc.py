@@ -397,16 +397,22 @@ class _load(object):
         psin_surf = []
         nextnodes = []
         nextnode = 0
-        while ~np.any(self.wall_nodes==nextnode):
-            psin_surf += [self.psin[nextnode]]
-            nextnodes += [nextnode]
-            inds = np.where(self.triObj.edges==nextnode)
-            #inds is (Npts,2) array, and nextnode could appear in either.
-            #what we want is not where nextnode appears, but where its neighbor is
-            #so flip inds[1] (these are all 0 or 1, so you want the other index for the neighbor)
-            possiblenodes = self.triObj.edges[inds[0],~inds[1]]
-            nextnode = possiblenodes[np.argmax(self.RZ[possiblenodes,0])]
-        self.psin_surf = np.array(psin_surf)
+        try:
+            self.psin_surf = self.readCmd(self.mesh_file,'psi_surf')/self.unit_dic['psi_x']
+        except:
+            if self.wall_nodes.size==0:
+                self.psin_surf = np.array([])
+                return
+            while ~np.any(self.wall_nodes==nextnode):
+                psin_surf += [self.psin[nextnode]]
+                nextnodes += [nextnode]
+                inds = np.where(self.triObj.edges==nextnode)
+                #inds is (Npts,2) array, and nextnode could appear in either.
+                #what we want is not where nextnode appears, but where its neighbor is
+                #so flip inds[1] (these are all 0 or 1, so you want the other index for the neighbor)
+                possiblenodes = self.triObj.edges[inds[0],~inds[1]]
+                nextnode = possiblenodes[np.argmax(self.RZ[possiblenodes,0])]
+            self.psin_surf = np.array(psin_surf)
     
     
     def calc_bary(self,R,Z):
@@ -503,12 +509,12 @@ class _load(object):
         mass,charge,vspace_vol,volfac,vth = self.moments_params(isp)
         
         #calculate moments of f0 using einsum for fast(er) calculation
-        den2d = np.einsum('ijk,ik->j',f0,volfac)*vspace_vol
-        Vpar2d = vth*np.einsum('k,ijk,ik->j',self.vpa,f0,volfac)*vspace_vol/den2d
+        den2d = np.einsum('...ijk,ik,j->...j',f0,volfac,vspace_vol)
+        Vpar2d = vth*np.einsum('k,...ijk,ik,j->...j',self.vpa,f0,volfac,vspace_vol)/den2d
         
         prefac = mass/(2.*np.abs(charge))
-        Tpar2d = 2.*prefac*( vth**2.*np.einsum('k,ijk,ik->j',self.vpa**2.,f0,volfac)*vspace_vol/den2d - Vpar2d**2. )
-        Tperp2d = prefac*vth**2.*np.einsum('i,ijk,ik->j',self.vpe**2.,f0,volfac)*vspace_vol/den2d
+        Tpar2d = 2.*prefac*( vth**2.*np.einsum('k,...ijk,ik,j->...j',self.vpa**2.,f0,volfac,vspace_vol)/den2d - Vpar2d**2. )
+        Tperp2d = prefac*vth**2.*np.einsum('i,...ijk,ik,j->...j',self.vpe**2.,f0,volfac,vspace_vol)/den2d
         T2d = (Tpar2d + 2.*Tperp2d)/3.
         
         return (den2d,Vpar2d,T2d,Tpar2d,Tperp2d)
