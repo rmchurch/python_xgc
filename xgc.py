@@ -13,7 +13,7 @@ import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
 from matplotlib.tri import Triangulation
-import adios as ad
+import adios2 as ad
 import h5py
 import matplotlib.pyplot as plt
 from scipy.io import matlab
@@ -72,15 +72,15 @@ class _load(object):
         time step.
         """
         def openAdios(x):
-            return adios.file(str(x)+'.bp')
+            return ad.open(str(x)+'.bp','r')
         def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
-            if type(x) is adios.file:
-                return x[v][inds]       
+            if type(x) is ad.file:
+                return x.read(v)[inds]
             else:
                 f = openAdios(x)
-                data = f[v][inds]
+                data = f.read(v)[inds]
                 f.close()
                 return data
         
@@ -101,7 +101,7 @@ class _load(object):
         self.mesh_file=self.xgc_path+'xgc.mesh'
         #check if files are in HDF5 or ADIOS format
         if os.path.exists(self.mesh_file+'.bp'):
-            import adios
+            import adios2 as ad
             self.openCmd=openAdios
             self.readCmd=readAdios
         elif os.path.exists(self.mesh_file+'.h5'):
@@ -623,8 +623,8 @@ class xgc1Load(_load):
            
              
         def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
-            import adios
-            flucFile = adios.file(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp')
+            import adios2 as ad
+            flucFile = ad.open(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp','r')
             dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
             pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
             eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
@@ -743,8 +743,8 @@ class xgc1Load(_load):
         # print 'Read time: '+str(time.time()-start)
         
         def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
-           import adios
-           f3dFile = adios.file(xgc_path + 'xgc.f3d.'+str(i).zfill(5)+'.bp')
+           import adios2 as ad
+           f3dFile = ad.open(xgc_path + 'xgc.f3d.'+str(i).zfill(5)+'.bp','r')
            i_T_perp = readCmd(f3dFile,'i_T_perp',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
            i_E_para = readCmd(f3dFile,'i_E_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),)  )#[rzInds]
            i_u_para = readCmd(f3dFile,'i_u_para',inds=(rzInds,)+(slice(phi_start,phi_end+1),)  )#[rzInds]            
