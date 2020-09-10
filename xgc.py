@@ -95,7 +95,7 @@ class _load(object):
                 f.close()
                 return data
         
-        print 'Loading XGC output data'
+        print('Loading XGC output data')
         
         self.xgc_path = os.path.join(xgc_path,'')  #get file_path, add path separator if not there
         self.mesh_file=self.xgc_path+'xgc.mesh'
@@ -111,7 +111,7 @@ class _load(object):
         else:
             raise ValueError('No xgc.mesh file found')
         
-        print 'from directory:'+ self.xgc_path
+        print('from directory:'+ self.xgc_path)
         #read in units file
         self.unit_file = self.xgc_path+'units.m'
         self.unit_dic = self.load_m(self.unit_file)
@@ -153,9 +153,9 @@ class _load(object):
         
         
         #read in mesh, equilibrium data, and finally fluctuation data
-        print 'Loading mesh and psi...'
+        print('Loading mesh and psi...')
         self.loadMesh()
-        print '\tmesh and psi loaded.'
+        print('\tmesh and psi loaded.')
         
         #TODO: This isnt right yet, need to instead find saddlepoint
         #could do using gradient in LinearTriinterpolator or Cubic 
@@ -170,16 +170,16 @@ class _load(object):
         #     self.unit_dic['eq_x_r'] = RZsep[xind,0]
         #     self.unit_dic['eq_x_z'] = RZsep[xind,1]
         
-        print 'Loading magnetics...'
+        print('Loading magnetics...')
         self.loadBfield()
-        print'\tmagnetics loaded.'
+        print('\tmagnetics loaded.')
         
         if not skiponeddiag:
-            print 'Loading equilibrium...'
+            print('Loading equilibrium...')
             self.load_oneddiag()
-            print '\tequlibrium loaded.'
+            print('\tequlibrium loaded.')
         else:
-            print 'Skipping equilibrium...'
+            print('Skipping equilibrium...')
     
     
     
@@ -243,7 +243,7 @@ class _load(object):
             try:
                 wall_nodes = self.readCmd(self.mesh_file,'psn_wall_nodes')-1 #-1 for 0-based index. This is sometimes for XGC1
             except:
-                print 'no wall_nodes'
+                print('no wall_nodes')
                 wall_nodes = np.array([-1])
         
         # set limits if not user specified
@@ -587,14 +587,14 @@ class xgc1Load(_load):
         self.Nplanes=self.phi_end-self.phi_start+1
         
         if not skip_fluc:
-            print 'Loading fluctuations...'
+            print('Loading fluctuations...')
             self.loadFluc()
-            print 'fluctuations loaded'
+            print('fluctuations loaded')
         
         if not skip_fluc:
-            print 'Loading flux data...'
+            print('Loading flux data...')
             #self.loadf3d()
-            print 'flux surfaces loaded'
+            print('flux surfaces loaded')
     
     
     def loadFluc(self):
@@ -821,7 +821,7 @@ class xgc1Load(_load):
             dMax = np.empty((xedges.size-1,))
             for i in np.arange(xedges.size-1):
                 if (y[(x>=xedges[i]) & (x<xedges[i+1])].size==0):
-                    print i
+                    print(i)
                     dMin[i]=np.nan
                     dMax[i]=np.nan
                 else:
@@ -881,9 +881,9 @@ class xgcaLoad(_load):
         #super().__init__(*args,**kwargs)
         super(xgcaLoad,self).__init__(xgc_path,**kwargs)
         
-        print 'Loading f0 data...'
+        print('Loading f0 data...')
         self.loadf0mesh()
-        print 'f0 data loaded'
+        print('f0 data loaded')
     
     def load2D():
         self.iden = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
