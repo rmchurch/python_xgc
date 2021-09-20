@@ -13,7 +13,7 @@ import glob
 from scipy.interpolate import splrep, splev
 from scipy.interpolate import LinearNDInterpolator, CloughTocher2DInterpolator
 from matplotlib.tri import Triangulation
-import adios as ad
+import adios2 as adios #TODO: Update reads from adios to adios2
 import h5py
 import matplotlib.pyplot as plt
 from scipy.io import matlab
@@ -71,9 +71,9 @@ class _load(object):
         """Copy all the input values and call all the functions that compute the equilibrium and the first
         time step.
         """
-        def openAdios(x):
+        def openAdios1(x):
             return adios.file(str(x)+'.bp')
-        def readAdios(x,v,inds=Ellipsis):
+        def readAdios1(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
             if type(x) is adios.file:
@@ -83,6 +83,41 @@ class _load(object):
                 data = f[v][inds]
                 f.close()
                 return data
+        
+        def openAdios2(x):
+            return adios.open(str(x)+'.bp','r')
+        def readAdios2(x,v,inds=Ellipsis):
+            if '/' in v: v = '/'+v
+            #v = '/'+v #this may be necessary for older xgc files
+            if type(x) is adios.File:
+                if x.current_step() >= x.steps():
+                    x.close()
+                    x = openAdios2(x)
+                f = x
+            else:
+                f = openAdios2(x)
+        
+            nstep = int(f.available_variables()[v]['AvailableStepsCount'])
+            if 'true' in f.available_variables()[v]['SingleValue'].lower():
+                datas = []
+                for fstep in f:
+                    datas.append(f.read(v))
+                data = np.squeeze(np.concatenate(datas))
+            else:
+                nsize = f.available_variables()[v]['Shape']
+                if nstep==1:
+                    data = f.read(v)
+                else:
+                    if not nsize:
+                        tmp = f.read(v)
+                        nsize = tmp.size 
+                    data = np.squeeze(f.read(v,start=[0,], count=[int(nsize),], step_start=0,step_count=nstep))
+            
+            if not type(x) is adios.File:
+                f.close()
+            
+            return data
+
         
         def openHDF5(x):
             return h5py.File(str(x)+'.h5','r')
@@ -101,9 +136,9 @@ class _load(object):
         self.mesh_file=self.xgc_path+'xgc.mesh'
         #check if files are in HDF5 or ADIOS format
         if os.path.exists(self.mesh_file+'.bp'):
-            import adios
-            self.openCmd=openAdios
-            self.readCmd=readAdios
+            import adios2
+            self.openCmd=openAdios2
+            self.readCmd=readAdios2
         elif os.path.exists(self.mesh_file+'.h5'):
             import h5py
             self.openCmd=openHDF5
@@ -136,6 +171,10 @@ class _load(object):
         
         #magnetics file
         self.bfield_file=self.xgc_path+'xgc.bfield'
+        print('Loading magnetics...')
+        self.loadBfield()
+        print('\tmagnetics loaded.')
+
         
         # limits of the mesh in tokamak coordinates. Set to min,max of arrays in loadMesh()
         #if unspecified by user
@@ -151,7 +190,7 @@ class _load(object):
         
         self.kind = kind
         
-        
+          
         #read in mesh, equilibrium data, and finally fluctuation data
         print('Loading mesh and psi...')
         self.loadMesh()
@@ -170,9 +209,6 @@ class _load(object):
         #     self.unit_dic['eq_x_r'] = RZsep[xind,0]
         #     self.unit_dic['eq_x_z'] = RZsep[xind,1]
         
-        print('Loading magnetics...')
-        self.loadBfield()
-        print('\tmagnetics loaded.')
         
         if not skiponeddiag:
             print('Loading equilibrium...')
@@ -235,6 +271,13 @@ class _load(object):
         psin = psi/self.unit_dic['psi_x']
         tri=self.readCmd(self.mesh_file,'cell_set[0]/node_connect_list') #already 0-based
         node_vol=self.readCmd(self.mesh_file,'node_vol')
+        
+        #get LFS X-point, where Bpol is null
+        if 'eq_x_r' not in self.unit_dic.keys():
+            Bpol = np.sqrt(np.sum(self.bfield[:,0:2]**2.,axis=1))
+            ind = np.argmin(Bpol[10:])+10
+            self.unit_dic['eq_x_r'],self.unit_dic['eq_x_z'] = RZ[ind,:]
+        
         theta = 180./np.pi*np.arctan2(RZ[:,1]-self.unit_dic['eq_axis_z'],RZ[:,0]-self.unit_dic['eq_axis_r'])
         self.theta_x = 180./np.pi*np.arctan2(self.unit_dic['eq_x_z']-self.unit_dic['eq_axis_z'],self.unit_dic['eq_x_r']-self.unit_dic['eq_axis_r'])
         try:
@@ -267,6 +310,7 @@ class _load(object):
         self.node_vol = node_vol[self.rzInds]
         self.theta = theta[self.rzInds]
         self.wall_nodes = np.where(np.in1d(np.where(self.rzInds)[0],wall_nodes))[0]
+        self.bfield[self.rzInds,:]
         
         # psi interpolant
         fill_ = np.nan
@@ -309,7 +353,8 @@ class _load(object):
         try:
             keys = f1d.var.keys()
         except:
-            keys = f1d.keys()
+            #keys = [key for key in f1d.keys()]
+            keys = [key for key in f1d.available_variables().keys()]
         keys.sort()
         for key in keys:
             data = self.readCmd(f1d,key)
@@ -369,9 +414,12 @@ class _load(object):
         """Load magnetic field
         """
         try:
-            self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[self.rzInds,:]
+            self.bfield = self.readCmd(self.bfield_file,'node_data[0]/values')[...]
         except:
-            self.bfield = self.readCmd(self.bfield_file,'bfield')[self.rzInds,:]
+            try:
+                self.bfield = self.readCmd(self.bfield_file,'/node_data[0]/values')[...]
+            except:
+                self.bfield = self.readCmd(self.bfield_file,'bfield')[...]
         
         
     def oned_mask(self):
@@ -400,10 +448,7 @@ class _load(object):
         try:
             self.psin_surf = self.readCmd(self.mesh_file,'psi_surf')/self.unit_dic['psi_x']
         except:
-            if self.wall_nodes.size==0:
-                self.psin_surf = np.array([])
-                return
-            while ~np.any(self.wall_nodes==nextnode):
+            for i in range(10000):
                 psin_surf += [self.psin[nextnode]]
                 nextnodes += [nextnode]
                 inds = np.where(self.triObj.edges==nextnode)
@@ -412,6 +457,8 @@ class _load(object):
                 #so flip inds[1] (these are all 0 or 1, so you want the other index for the neighbor)
                 possiblenodes = self.triObj.edges[inds[0],~inds[1]]
                 nextnode = possiblenodes[np.argmax(self.RZ[possiblenodes,0])]
+                if (np.any(self.wall_nodes==nextnode)) | (self.psin[nextnode]<psin_surf[-1]):
+                    break
             self.psin_surf = np.array(psin_surf)
     
     
