@@ -76,10 +76,12 @@ class _load(object):
         def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
-            if type(x) is ad.file:
+            if type(x) is ad.adios2.File:
+                assert(v in x.available_variables().keys())
                 return x.read(v)[inds]
             else:
                 f = openAdios(x)
+                assert(v in f.available_variables().keys())
                 data = f.read(v)[inds]
                 f.close()
                 return data
@@ -122,7 +124,10 @@ class _load(object):
         #read in time
         self.oneddiag_file=self.xgc_path+'xgc.oneddiag'
         self.mask1d = self.oned_mask()
-        self.time = np.array(self.readCmd(self.oneddiag_file,'time')[self.mask1d],ndmin=1)
+        try:
+            self.time = np.array(self.readCmd(self.oneddiag_file,'time')[self.mask1d],ndmin=1)
+        except:
+            self.time = [0]
         if t_start is None: t_start=1
         assert t_start > 0, "t_start must be greater than 0 (1-based index)"
         self.t_start=int(t_start)
@@ -241,7 +246,7 @@ class _load(object):
             wall_nodes = self.readCmd(self.mesh_file,'wall_nodes')-1 #-1 for 0-based index. Usually for XGCa
         except:
             try:
-                wall_nodes = self.readCmd(self.mesh_file,'psn_wall_nodes')-1 #-1 for 0-based index. This is sometimes for XGC1
+                wall_nodes = self.readCmd(self.mesh_file,'grid_wall_nodes')-1 #-1 for 0-based index. This is sometimes for XGC1
             except:
                 print('no wall_nodes')
                 wall_nodes = np.array([-1])
