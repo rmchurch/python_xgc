@@ -76,7 +76,7 @@ class _load(object):
         def readAdios(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
-            if type(x) is ad.adios2.File:
+            if type(x) is ad.File:
                 assert(v in x.available_variables().keys())
                 return x.read(v)[inds]
             else:
@@ -91,7 +91,7 @@ class _load(object):
         def readAdios2(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
-            if type(x) is adios.File:
+            if type(x) is ad.File:
                 if x.current_step() >= x.steps():
                     x.close()
                     x = openAdios2(x)
@@ -100,22 +100,16 @@ class _load(object):
                 f = openAdios2(x)
         
             nstep = int(f.available_variables()[v]['AvailableStepsCount'])
-            if 'true' in f.available_variables()[v]['SingleValue'].lower():
-                datas = []
-                for fstep in f:
-                    datas.append(f.read(v))
-                data = np.squeeze(np.concatenate(datas))
-            else:
-                nsize = f.available_variables()[v]['Shape']
-                if nstep==1:
-                    data = f.read(v)
-                else:
-                    if not nsize:
-                        tmp = f.read(v)
-                        nsize = tmp.size 
-                    data = np.squeeze(f.read(v,start=[0,], count=[int(nsize),], step_start=0,step_count=nstep))
+            nsize = f.available_variables()[v]['Shape']
+            if nstep==1:
+                data = f.read(v)[inds]
+            elif nsize != '': #mostly xgc.oneddiag
+                nsize = int(nsize)
+                data = f.read(v,start=[0], count=[nsize], step_start=0, step_count=nstep)
+            else: #mostly xgc.oneddiag
+                data = f.read(v,start=[], count=[], step_start=0, step_count=nstep)
             
-            if not type(x) is adios.File:
+            if not type(x) is ad.File:
                 f.close()
             
             return data
@@ -139,8 +133,8 @@ class _load(object):
         #check if files are in HDF5 or ADIOS format
         if os.path.exists(self.mesh_file+'.bp'):
             import adios2 as ad
-            self.openCmd=openAdios
-            self.readCmd=readAdios
+            self.openCmd=openAdios2
+            self.readCmd=readAdios2
         elif os.path.exists(self.mesh_file+'.h5'):
             import h5py
             self.openCmd=openHDF5
@@ -359,6 +353,7 @@ class _load(object):
             keys = f1d.var.keys()
         except:
             #keys = [key for key in f1d.keys()]
+            #adios2
             keys = [key for key in f1d.available_variables().keys()]
         keys.sort()
         for key in keys:
