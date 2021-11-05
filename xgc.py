@@ -193,6 +193,7 @@ class _load(object):
         #read in mesh, equilibrium data, and finally fluctuation data
         print('Loading mesh and psi...')
         self.loadMesh()
+        self.load_fluxavg()
         print('\tmesh and psi loaded.')
         
         #TODO: This isnt right yet, need to instead find saddlepoint
@@ -486,8 +487,24 @@ class _load(object):
         p[ininds,:] = np.linalg.solve(T,xi)
         return p,trii
     
-    
-    def fluxAvg(self,data,psin_inds=None):
+    def load_fluxavg(self):
+        try:
+            self.fluxavg_file = self.xgc_path+'xgc.fluxavg'
+            nelement = self.readCmd(self.fluxavg_file,'nelement')
+            eindex = self.readCmd(self.fluxavg_file,'eindex')-1
+            norm1d = self.readCmd(self.fluxavg_file,'norm1d')
+            value = self.readCmd(self.fluxavg_file,'value')
+            npsi = self.readCmd(self.fluxavg_file,'npsi')
+            self.fluxavg_mat = self.create_sparse_xgc(nelement, eindex, value, m=nelement.size, n=npsi).T
+            self.fluxAvg = self.fluxAvgNew
+        except:
+            self.fluxAvg = self.fluxAvgOld
+
+    def fluxAvgNew(self,data,psin_inds=None):
+        dataAvg = self.fluxavg_mat.dot(data)
+        return dataAvg
+
+    def fluxAvgOld(self,data,psin_inds=None):
         if psin_inds is None: psin_inds = np.arange(self.psin_surf.size,dtype=int) 
         dataAvg = np.zeros((psin_inds.size,))
         for (i,p) in enumerate(self.psin_surf[psin_inds]):
@@ -530,10 +547,13 @@ class _load(object):
         vpa=np.linspace(-f0_vp_max,f0_vp_max,2*f0_nvp+1)
         return (vpa, vpe, vpe1)
 
-    def create_sparse_xgc(self,nelement,eindex,value):
+    def create_sparse_xgc(self,nelement,eindex,value,m=None,n=None):
         """Create Python sparse matrix from XGC data"""
         from scipy.sparse import csr_matrix
-
+        
+        if m is None: m = nelement.size
+        if n is None: n = nelement.size
+        
         #format for Python sparse matrix
         indptr = np.insert(np.cumsum(nelement),0,0)
         indices = np.empty((indptr[-1],))
@@ -542,7 +562,7 @@ class _load(object):
                 indices[indptr[i]:indptr[i+1]] = eindex[i,0:nelement[i]]
                 data[indptr[i]:indptr[i+1]] = value[i,0:nelement[i]]
         #create sparse matrices
-        spmat = csr_matrix((data,indices,indptr),shape=(nelement.size,nelement.size))
+        spmat = csr_matrix((data,indices,indptr),shape=(m,n))
         return spmat
     
             
