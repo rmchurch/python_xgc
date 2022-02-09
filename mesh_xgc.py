@@ -1,0 +1,248 @@
+# coding: utf-8
+import numpy as np
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt; plt.ion()
+from omfit_classes.omfit_eqdsk import OMFITgeqdsk
+from scipy import interpolate
+import os
+
+def mtanh(x,c0,c1,c2,c3,c4):
+    z=2.*(c0-x)/c1
+    res=0.5*(c2-c3)*( (1+c4*z)*np.exp(z)-np.exp(-z) )/( np.exp(z)+np.exp(-z) ) + 0.5*(c2+c3)
+    return res
+
+def fit_mtanh(xdata,ydata,**kwargs):
+    fac = 1.
+    if ydata.max() > 1e10:  fac = 1e19
+    a,aCovar=curve_fit(mtanh,xdata,ydata/fac,**kwargs)
+    a[2]=a[2]*fac
+    a[3]=a[3]*fac
+    return a,aCovar
+
+
+
+class pfile():
+    def __init__(self, pfilename, outfile_prefix = None, write_fits = False):
+
+        self.pfilename = pfilename
+        self.outfile_prefix = outfile_prefix
+        #read data from pfile
+        self.xdata, self.ydata, self.labels = self.read_pfile(self.pfilename)
+        #fit pfile data
+        self.fits = self.fit_pfile()
+        #write out fit profile data for XGC
+        if write_fits: self.write_fits()
+    
+
+    def read_pfile(self,pfilename):
+        labels = []
+        xdata = []
+        ydata = []
+        i = -1; j = 0
+        f = open(pfilename)
+        for line in f:
+            if ('psinorm' in line) | ('SPECIES' in line):
+                N = int(line.strip().split()[0])
+                i += 1
+                xdata += [np.empty((N,))]
+                ydata += [np.empty((N,))]
+                j = 0
+                labels += [line.strip().split()[2]]
+            else:
+                xdata[i][j],ydata[i][j] = np.array(line.strip().split()[0:2]).astype('float')
+                j += 1
+        return xdata,ydata,labels
+
+
+    def write_fits(self):
+        shotstr,timestr = self.pfilename.split('.')
+        shotstr = shotstr[1:] #remove p
+        write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ne.dat',self.fits['psinneOut'],self.fits['neOut']*1e20)
+        write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_te.dat',self.fits['psinTeOut'],self.fits['TeOut'])
+        write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ti.dat',self.fits['psinTiOut'],self.fits['TiOut'])
+    
+
+    def write_profile(self,filename,x,y):
+        f = open(filename,'w')
+        f.write('%i \n' % len(x))
+        for (xi,yi) in zip(x,y):
+            f.write('%2.8e\t%4.8e\n' % (xi,yi))
+        f.write('-1')
+        f.close()
+
+
+    def fit_pfile(self):
+        #fit ne
+        lowbnds = np.zeros((5,))
+        upbnds = np.ones((5,))
+        #force the base to match min value
+        upbnds[3] = self.ydata[0].min()
+
+        ane,anec = fit_mtanh(self.xdata[0][self.xdata[0]>0.7],self.ydata[0][self.xdata[0]>0.7],bounds=(lowbnds,upbnds))
+        dp = np.diff(self.xdata[0][-50:]).mean()
+        psinSOLne = np.arange(self.xdata[0][-1]+dp,self.xdata[0][-1]+25*dp,dp )
+        psinneOut = np.hstack( (self.xdata[0],psinSOLne) )
+
+        #neSolFit = mtanh(psinSOLne,*ane)
+        lambdane_psin = 2.9676 * 9e-3 #hardcoded average midplane lambda_ne in psin units (8.6 mm)
+        neSolFit = self.ydata[0][-1]*np.exp(-(psinSOLne - self.xdata[0][-1])/lambdane_psin)
+        neOut = np.hstack( (self.ydata[0], neSolFit) )
+
+        #fit Te
+        lowbnds = np.zeros((5,))
+        upbnds = np.ones((5,))
+        lowbnds[3] = 10./1e3
+        upbnds[3] = 20./1e3
+
+        aTe,aTec = fit_mtanh(self.xdata[1][self.xdata[1]>0.7],self.ydata[1][self.xdata[1]>0.7],bounds=(lowbnds,upbnds))
+        dp = np.diff(self.xdata[1][-50:]).mean()
+        psinSOLTe = np.arange(self.xdata[1][-1]+dp,self.xdata[1][-1]+25*dp,dp )
+        psinTeOut = np.hstack( (self.xdata[1],psinSOLTe) )
+
+        TeSolFit = mtanh(psinSOLTe,*aTe)
+        TeOut = np.hstack( (self.ydata[1], TeSolFit) )
+        TeOut = TeOut*1e3 #keV -> eV
+
+        #fit Ti
+        lowbnds = np.zeros((5,))
+        upbnds = np.ones((5,))
+        lowbnds[3] = 10./1e3
+        upbnds[3] = 200./1e3
+
+        aTi,aTic = fit_mtanh(self.xdata[3][self.xdata[3]>0.7],self.ydata[3][self.xdata[3]>0.7],bounds=(lowbnds,upbnds))
+        dp = np.diff(self.xdata[3][-50:]).mean()
+        psinSOLTi = np.arange(self.xdata[3][-1]+dp,self.xdata[3][-1]+25*dp,dp )
+        psinTiOut = np.hstack( (self.xdata[3],psinSOLTi) )
+
+        TiSolFit = mtanh(psinSOLTi,*aTi)
+        TiOut = np.hstack( (self.ydata[3], TiSolFit) )
+        TiOut = TiOut*1e3 #keV -> eV
+
+        return {'psinneOut':psinneOut, 'neOut': neOut, 
+                'psinTeOut':psinTeOut, 'TeOut': TeOut, 
+                'psinTiOut':psinTiOut, 'TiOut': TiOut 
+                }
+
+
+    def plot_fits(self):
+        plt.figure()
+        ax1 = plt.subplot(311)
+        plt.plot(self.fits['psinneOut'],self.fits['neOut'],'-o')
+        plt.plot(self.xdata[0],self.ydata[0],'r')
+        ax2 = plt.subplot(312,sharex=ax1)
+        plt.plot(self.fits['psinTeOut'],self.fits['TeOut'],'-o')
+        plt.plot(self.xdata[1],self.ydata[1]*1e3,'r')
+        plt.subplot(313,sharex=ax1)
+        plt.plot(self.fits['psinTiOut'],self.fits['TiOut'],'-o')
+        plt.plot(self.xdata[3],self.ydata[3]*1e3,'r')
+        plt.xlabel('$\psi_N$')
+
+    
+class mesh_xgc():
+
+    def __init__(self,pfilename, gfilename):
+        self.pfilename = pfilename
+        self.pobj = pfile(pfilename)
+        self.eq = OMFITgeqdsk(gfilename)
+
+        self.psinOut = self.pobj.fits['psinneOut']
+        self.RmidOut = self.calc_Rmid(self.psinOut)
+        self.Lne, self.LTe, self.LTi = self.scale_lengths(self.RmidOut,
+                                                    self.pobj.fits['neOut'],
+                                                    self.pobj.fits['TeOut'],
+                                                    self.pobj.fits['TiOut'])
+        self.rhoi = self.calc_rhoi(self.RmidOut, self.Z0, self.pobj.fits['TiOut'])
+
+        self.spacing = self.calc_spacing()
+
+    def calc_spacing(self):
+        #find min/max
+        spacing = np.min( np.vstack( (0.0075*np.ones(self.psinOut.shape),
+                         self.Lne/10, self.LTe/10, self.LTi/10) ),axis=0)
+        #make a smoother transition to fine-scale spacing
+        spacinghalf = (spacing.max()+spacing.min())/2.
+        indhalf = np.where(spacing<spacinghalf)[0][0]
+        indstrans = np.where( (self.psinOut>0.5) & (self.psinOut<self.psinOut[indhalf]) )[0]
+        spacing[indstrans] = np.linspace(spacing.max(),spacinghalf,indstrans.size)
+        #create a min for SOL
+        minspace = max(spacing.min(),0.)
+        spacingquarter = (spacing.max()-minspace)/4.+minspace
+        spacing[spacing<0]=0.
+        spacing[(spacing>spacingquarter) & (self.psinOut>1)] = spacingquarter
+        return spacing
+
+    def write_spacing(self):
+        #create inter_curve_spacing_file
+        psinSurf = [0.0]
+        Rsurf = [self.R0]
+        while True:
+            Rsurf += [Rsurf[-1]+np.interp(Rsurf[-1],self.RmidOut,self.spacing)]
+            psinSurf += [np.interp(Rsurf[-1],self.RmidOut,self.psinOut)]
+            if (Rsurf[-1]>self.RmidOut.max()):
+                break
+        Rsurf = np.array(Rsurf)
+        psinSurf = np.array(psinSurf)
+
+        #create filenames
+        shotstr,timestr = os.path.basename(self.pfilename).split('.')
+        shotstr = shotstr[1:] #remove p
+        file_surf = shotstr+'.'+timestr+'_surf.dat'
+        file_dpol = shotstr+'.'+timestr+'_dpol.dat'
+        #write surf file
+        with open(file_surf,'w') as f:
+            f.write('%d \n' % len(psinSurf))
+            for p in psinSurf:
+                f.write('%2.6e \n' % p)
+            f.close()
+        
+        #write dpol file
+        dpol = np.gradient(Rsurf) #equal dR and dpol
+        with open(file_dpol,'w') as f:
+            f.write(str(len(psinSurf))+'\n')
+            for (p,d) in zip(psinSurf,dpol):
+                f.write('%2.6e\t%2.6e\n' % (p,d))
+            f.close()
+
+
+    def plot_spacing(self):
+        plt.figure()
+        plt.plot(self.psinOut,self.Lne/10,label='Lne/10',color='blue')
+        plt.plot(self.psinOut,self.LTe/10,label='LTe/10',color='red')
+        plt.plot(self.psinOut,self.LTi/10,label='LTi/10',color='green')
+        plt.plot(self.psinOut,self.rhoi,label=r'$\rho_i$',color='black')
+        plt.plot(self.psinOut,0.01*np.ones(self.psinOut.size),color='black',linestyle='--')
+        plt.plot(self.psinOut,self.spacing,'--',color='orange',linewidth=2)
+
+        plt.xlabel(r'$\psi_N$')
+        plt.ylabel('[m]')
+        plt.ylim([0,0.05])
+        plt.legend()
+
+
+    def calc_Rmid(self,psin):
+        R=self.eq['AuxQuantities']['R']
+        Z=self.eq['AuxQuantities']['Z']
+        psinRZ=self.eq['AuxQuantities']['PSIRZ_NORM']
+        self.R0=self.eq['fluxSurfaces']['R0']
+        self.Z0=self.eq['fluxSurfaces']['Z0']
+        RmidGrid=np.linspace(self.R0,np.max(R),1000)
+        splPsin=interpolate.RectBivariateSpline(R,Z,psinRZ.T)
+        psinGrid=np.squeeze(splPsin(RmidGrid,self.Z0))
+
+        splRmid=interpolate.interp1d(psinGrid,RmidGrid,bounds_error=False)
+        return splRmid(psin)
+
+    def scale_lengths(self,RmidOut, neOut, TeOut, TiOut):
+        Lne=neOut/np.abs(np.gradient(neOut)/np.gradient(RmidOut))
+        LTe=TeOut/np.abs(np.gradient(TeOut)/np.gradient(RmidOut))
+        LTi=TiOut/np.abs(np.gradient(TiOut)/np.gradient(RmidOut))
+        return Lne, LTe, LTi
+
+    def calc_rhoi(self,RmidOut, ZmidOut, TiOut): 
+        R=self.eq['AuxQuantities']['R']
+        Z=self.eq['AuxQuantities']['Z']
+        Bt=self.eq['AuxQuantities']['Bt']
+        splBt=interpolate.RectBivariateSpline(R,Z,Bt.T)
+        BtFit=np.squeeze(np.abs(splBt(RmidOut,ZmidOut)))
+        return np.sqrt(2*1.667e-27*1.609e-19*TiOut)/(1.609e-19*BtFit)
+        
