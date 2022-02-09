@@ -22,7 +22,7 @@ def fit_mtanh(xdata,ydata,**kwargs):
 
 
 class pfile():
-    def __init__(self, pfilename, outfile_prefix = None, write_fits = False):
+    def __init__(self, pfilename, outfile_prefix = '', write_fits = False):
 
         self.pfilename = pfilename
         self.outfile_prefix = outfile_prefix
