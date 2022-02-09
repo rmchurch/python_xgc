@@ -185,9 +185,7 @@ class mesh_xgc():
         while True:
             Rsurf.insert(0,Rsurf[0]-np.interp(Rsurf[0],self.RmidOut,self.spacing))
             psinSurf.insert(0,np.interp(Rsurf[0],self.RmidOut,self.psinOut))
-            if (Rsurf[0]<self.R0):
-                Rsurf.insert(0,self.R0)
-                psinSurf.insert(0,0.0)
+            if (Rsurf[0]<=self.R0):
                 break
             
         Rsurf = np.array(Rsurf)
