@@ -55,11 +55,11 @@ class pfile():
 
 
     def write_fits(self):
-        shotstr,timestr = self.pfilename.split('.')
+        shotstr,timestr = os.path.basename(self.pfilename).split('.')
         shotstr = shotstr[1:] #remove p
-        write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ne.dat',self.fits['psinneOut'],self.fits['neOut']*1e20)
-        write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_te.dat',self.fits['psinTeOut'],self.fits['TeOut'])
-        write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ti.dat',self.fits['psinTiOut'],self.fits['TiOut'])
+        self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ne.dat',self.fits['psinneOut'],self.fits['neOut']*1e20)
+        self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_te.dat',self.fits['psinTeOut'],self.fits['TeOut'])
+        self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ti.dat',self.fits['psinTiOut'],self.fits['TiOut'])
     
 
     def write_profile(self,filename,x,y):
@@ -173,13 +173,23 @@ class mesh_xgc():
 
     def write_spacing(self):
         #create inter_curve_spacing_file
-        psinSurf = [0.0]
-        Rsurf = [self.R0]
+        psinSurf = [1.0]
+        Rsurf = [np.interp(1.0,self.psinOut,self.RmidOut)]
+        #forward from psin = 1.0 to wall
         while True:
             Rsurf += [Rsurf[-1]+np.interp(Rsurf[-1],self.RmidOut,self.spacing)]
             psinSurf += [np.interp(Rsurf[-1],self.RmidOut,self.psinOut)]
             if (Rsurf[-1]>self.RmidOut.max()):
                 break
+        #backward from psin = 1.0 to core
+        while True:
+            Rsurf.insert(0,Rsurf[0]-np.interp(Rsurf[0],self.RmidOut,self.spacing))
+            psinSurf.insert(0,np.interp(Rsurf[0],self.RmidOut,self.psinOut))
+            if (Rsurf[0]<self.R0):
+                Rsurf.insert(0,self.R0)
+                psinSurf.insert(0,0.0)
+                break
+            
         Rsurf = np.array(Rsurf)
         psinSurf = np.array(psinSurf)
 
