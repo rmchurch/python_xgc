@@ -41,7 +41,12 @@ class pfile():
         i = -1; j = 0
         f = open(pfilename)
         for line in f:
-            if ('psinorm' in line) | ('SPECIES' in line):
+            if ('SPECIES' in line):
+                N = int(line.strip().split()[0])
+                for s in range(N):
+                    #for now, dont save out info
+                    line = next(f)
+            elif ('psinorm' in line):
                 N = int(line.strip().split()[0])
                 i += 1
                 xdata += [np.empty((N,))]
@@ -60,6 +65,10 @@ class pfile():
         self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ne.dat',self.fits['psinneOut'],self.fits['neOut']*1e20)
         self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_te.dat',self.fits['psinTeOut'],self.fits['TeOut'])
         self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_ti.dat',self.fits['psinTiOut'],self.fits['TiOut'])
+        for s in range(1,4):
+            spstr = 'nz'+str(s)
+            if spstr+'Out' in self.fits.keys():
+                self.write_profile(self.outfile_prefix+shotstr+'.'+timestr+'_'+spstr+'.dat',self.fits['psin'+spstr+'Out'],self.fits[spstr+'Out']*1e20)
     
 
     def write_profile(self,filename,x,y):
@@ -87,6 +96,7 @@ class pfile():
         lambdane_psin = 2.9676 * 9e-3 #hardcoded average midplane lambda_ne in psin units (8.6 mm)
         neSolFit = self.ydata[0][-1]*np.exp(-(psinSOLne - self.xdata[0][-1])/lambdane_psin)
         neOut = np.hstack( (self.ydata[0], neSolFit) )
+
 
         #fit Te
         lowbnds = np.zeros((5,))
@@ -118,10 +128,25 @@ class pfile():
         TiOut = np.hstack( (self.ydata[3], TiSolFit) )
         TiOut = TiOut*1e3 #keV -> eV
 
-        return {'psinneOut':psinneOut, 'neOut': neOut, 
-                'psinTeOut':psinTeOut, 'TeOut': TeOut, 
-                'psinTiOut':psinTiOut, 'TiOut': TiOut 
-                }
+        results = {'psinneOut':psinneOut, 'neOut': neOut, 
+                   'psinTeOut':psinTeOut, 'TeOut': TeOut, 
+                   'psinTiOut':psinTiOut, 'TiOut': TiOut 
+                  }
+        
+        #impurities
+        for i in range(1,4): 
+            indnz = [ind for ind,s, in enumerate(self.labels) if 'nz'+str(i) in s]  
+            if indnz:
+                dp = np.diff(self.xdata[indnz[0]][-50:]).mean()
+                psinSOLnz = np.arange(self.xdata[indnz[0]][-1]+dp,self.xdata[indnz[0]][-1]+25*dp,dp )
+                psinnzOut = np.hstack( (self.xdata[indnz[0]],psinSOLnz) )
+                nzSolFit = self.ydata[indnz[0]][-1]*np.exp(-(psinSOLnz - self.xdata[indnz[0]][-1])/lambdane_psin)
+                nzOut = np.hstack( (self.ydata[indnz[0]], nzSolFit) )
+                results['psinnz'+str(i)+'Out'] = psinnzOut
+                results['nz'+str(i)+'Out'] = nzOut
+
+        return results
+            
 
 
     def plot_fits(self):
@@ -171,7 +196,7 @@ class mesh_xgc():
         spacing[(spacing>spacingquarter) & (self.psinOut>1)] = spacingquarter
         return spacing
 
-    def write_spacing(self):
+    def write_spacing(self, neoclassical=True):
         #create inter_curve_spacing_file
         psinSurf = [1.0]
         Rsurf = [np.interp(1.0,self.psinOut,self.RmidOut)]
@@ -205,6 +230,7 @@ class mesh_xgc():
         
         #write dpol file
         dpol = np.gradient(Rsurf) #equal dR and dpol
+        if neoclassical: dpol = 3*dpol #can be 3-5x for neoclassical
         with open(file_dpol,'w') as f:
             f.write(str(len(psinSurf))+'\n')
             for (p,d) in zip(psinSurf,dpol):
