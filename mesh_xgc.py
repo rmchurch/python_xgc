@@ -165,25 +165,37 @@ class pfile():
     
 class mesh_xgc():
 
-    def __init__(self,pfilename, gfilename):
+    def __init__(self,pfilename, gfilename, **kwargs):
         self.pfilename = pfilename
         self.pobj = pfile(pfilename)
         self.eq = OMFITgeqdsk(gfilename)
 
         self.psinOut = self.pobj.fits['psinneOut']
         self.RmidOut = self.calc_Rmid(self.psinOut)
+        #these will be different if psin_max set (to extrapolate)
+        self.psin_mesh = self.psinOut.copy()
+        self.Rmid_mesh = self.RmidOut.copy()
         self.Lne, self.LTe, self.LTi = self.scale_lengths(self.RmidOut,
                                                     self.pobj.fits['neOut'],
                                                     self.pobj.fits['TeOut'],
                                                     self.pobj.fits['TiOut'])
         self.rhoi = self.calc_rhoi(self.RmidOut, self.Z0, self.pobj.fits['TiOut'])
 
-        self.spacing = self.calc_spacing()
+        self.spacing = self.calc_spacing(**kwargs)
 
-    def calc_spacing(self):
+    def calc_spacing(self, fact_Lne=10., fact_LTe=10., fact_LTi=10., min_spacing=0., max_spacing=7.5e-3, min_rhoi_spacing=False, psin_max=None):
+        self.fact_Lne=fact_Lne
+        self.fact_LTe=fact_LTe
+        self.fact_LTi=fact_LTi
+        self.min_spacing=min_spacing
+        self.max_spacing=max_spacing
+
         #find min/max
-        spacing = np.min( np.vstack( (0.0075*np.ones(self.psinOut.shape),
-                         self.Lne/10, self.LTe/10, self.LTi/10) ),axis=0)
+        spacing = np.min( np.vstack( (max_spacing*np.ones(self.psinOut.shape),
+                         self.Lne/fact_Lne, self.LTe/fact_LTe, self.LTi/fact_LTi) ),axis=0)
+        spacing = np.max( np.vstack( (spacing, min_spacing*np.ones(self.psinOut.shape)) ), axis=0)
+        if min_rhoi_spacing:
+            spacing = np.max( np.vstack( (spacing, self.rhoi) ), axis=0)
         #make a smoother transition to fine-scale spacing
         spacinghalf = (spacing.max()+spacing.min())/2.
         indhalf = np.where(spacing<spacinghalf)[0][0]
@@ -194,24 +206,33 @@ class mesh_xgc():
         spacingquarter = (spacing.max()-minspace)/4.+minspace
         spacing[spacing<0]=0.
         spacing[(spacing>spacingquarter) & (self.psinOut>1)] = spacingquarter
+        if psin_max is not None:
+            if psin_max > self.psinOut[-1]:
+                #TODO: probably need a check that psin_max < psinWall
+                spacing = np.append(spacing,max_spacing)
+                self.psin_mesh = np.append(self.psin_mesh,psin_max)
+                self.Rmid_mesh = np.append(self.Rmid_mesh,self.calc_Rmid(psin_max))
         return spacing
 
-    def write_spacing(self, neoclassical=True):
+    def write_spacing(self, xgca=True):
         #create inter_curve_spacing_file
         psinSurf = [1.0]
-        Rsurf = [np.interp(1.0,self.psinOut,self.RmidOut)]
+        Rsurf = [np.interp(1.0,self.psin_mesh,self.Rmid_mesh)]
         #forward from psin = 1.0 to wall
         while True:
-            Rsurf += [Rsurf[-1]+np.interp(Rsurf[-1],self.RmidOut,self.spacing)]
-            psinSurf += [np.interp(Rsurf[-1],self.RmidOut,self.psinOut)]
-            if (Rsurf[-1]>self.RmidOut.max()):
+            Rnew = Rsurf[-1]+np.interp(Rsurf[-1],self.Rmid_mesh,self.spacing)
+            if (Rnew>self.Rmid_mesh.max()):
                 break
+            Rsurf += [Rnew]
+            psinSurf += [np.interp(Rsurf[-1],self.Rmid_mesh,self.psin_mesh)]
+
         #backward from psin = 1.0 to core
         while True:
-            Rsurf.insert(0,Rsurf[0]-np.interp(Rsurf[0],self.RmidOut,self.spacing))
-            psinSurf.insert(0,np.interp(Rsurf[0],self.RmidOut,self.psinOut))
-            if (Rsurf[0]<=self.R0):
+            Rnew = Rsurf[0]-np.interp(Rsurf[0],self.Rmid_mesh,self.spacing)
+            if Rnew<=self.R0:
                 break
+            Rsurf.insert(0,Rnew)
+            psinSurf.insert(0,np.interp(Rnew,self.Rmid_mesh,self.psin_mesh))
             
         Rsurf = np.array(Rsurf)
         psinSurf = np.array(psinSurf)
@@ -230,7 +251,7 @@ class mesh_xgc():
         
         #write dpol file
         dpol = np.gradient(Rsurf) #equal dR and dpol
-        if neoclassical: dpol = 3*dpol #can be 3-5x for neoclassical
+        if xgca: dpol = 3*dpol #can be 3-5x for neoclassical
         with open(file_dpol,'w') as f:
             f.write(str(len(psinSurf))+'\n')
             for (p,d) in zip(psinSurf,dpol):
@@ -240,12 +261,12 @@ class mesh_xgc():
 
     def plot_spacing(self):
         plt.figure()
-        plt.plot(self.psinOut,self.Lne/10,label='Lne/10',color='blue')
-        plt.plot(self.psinOut,self.LTe/10,label='LTe/10',color='red')
-        plt.plot(self.psinOut,self.LTi/10,label='LTi/10',color='green')
+        plt.plot(self.psinOut,self.Lne/self.fact_Lne,label='Lne/'+str(self.fact_Lne),color='blue')
+        plt.plot(self.psinOut,self.LTe/self.fact_LTe,label='LTe/'+str(self.fact_LTe),color='red')
+        plt.plot(self.psinOut,self.LTi/self.fact_LTi,label='LTi/'+str(self.fact_LTi),color='green')
         plt.plot(self.psinOut,self.rhoi,label=r'$\rho_i$',color='black')
-        plt.plot(self.psinOut,0.01*np.ones(self.psinOut.size),color='black',linestyle='--')
-        plt.plot(self.psinOut,self.spacing,'--',color='orange',linewidth=2)
+        plt.plot(self.psinOut,self.max_spacing*np.ones(self.psinOut.size),color='black',linestyle='--')
+        plt.plot(self.psin_mesh,self.spacing,'--',color='orange',linewidth=2)
 
         plt.xlabel(r'$\psi_N$')
         plt.ylabel('[m]')
