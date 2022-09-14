@@ -230,13 +230,16 @@ class mesh_xgc():
         while True:
             Rnew = Rsurf[0]-np.interp(Rsurf[0],self.Rmid_mesh,self.spacing)
             if Rnew<=self.R0:
+                #make sure 0.0 surface is there
+                Rsurf[0] = self.R0
+                psinSurf[0] = 0.0
                 break
             Rsurf.insert(0,Rnew)
             psinSurf.insert(0,np.interp(Rnew,self.Rmid_mesh,self.psin_mesh))
             
         Rsurf = np.array(Rsurf)
         psinSurf = np.array(psinSurf)
-
+        
         #create filenames
         shotstr,timestr = os.path.basename(self.pfilename).split('.')
         shotstr = shotstr[1:] #remove p
