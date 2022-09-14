@@ -363,6 +363,17 @@ class _load(object):
             oneddiag[key]=data
         self.oneddiag = oneddiag
         
+        #read in volume information (used for radial fluxes calculation)
+        #try:
+        fv = self.openCmd('xgc.volumes')
+        self.vol1d = self.readCmd(fv,'diag_1d_vol')
+        psi_mks = self.oneddiag['psi_mks']
+        if len(psi_mks.shape)>1:
+            psi_mks = psi_mks[-1,...]
+        self.dvol_dpsi = self.vol1d/np.gradient(psi_mks)
+        #except:
+        #    print("\t\tdV/dpsi calculation failed")
+
         #TODO: Decide if should remove this legacy renaming
         #modify 1d psin data
         self.psin1d = self.oneddiag['psi']
