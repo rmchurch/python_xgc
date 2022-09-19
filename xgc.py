@@ -195,6 +195,19 @@ class _load(object):
         self.loadMesh()
         self.load_fluxavg()
         print('\tmesh and psi loaded.')
+        # Load field-line mapping matrices
+        print("\tLoading field-line mappings...")
+        # The matrices loaded here are good for b.grad() and real2ff transformation
+        self.load_ff_mapping()
+        # Optional: generate ff2real matrix from the real2ff mappings
+        #           This creates only the Delta-phi/2 forward mapping
+        # self.gen_ff2real_mapping()
+        print("\tField-line mappings loaded.")
+        #
+        # Load gradient matrix
+        print("\tLoading in-plane gradient matrix...")
+        self.load_grad_mat()
+        print("\tIn-plane gradient matrix loaded.")
         
         #TODO: This isnt right yet, need to instead find saddlepoint
         #could do using gradient in LinearTriinterpolator or Cubic 
@@ -507,13 +520,12 @@ class _load(object):
             value = self.readCmd(self.fluxavg_file,'value')
             npsi = self.readCmd(self.fluxavg_file,'npsi')
             self.fluxavg_mat = self.create_sparse_xgc(nelement, eindex, value, m=nelement.size, n=npsi).T
+            print('Using new flux-avg')
             self.fluxAvg = self.fluxAvgNew
         except:
+            print('Using old flux-avg')
             self.fluxAvg = self.fluxAvgOld
 
-    def fluxAvgNew(self,data,psin_inds=None):
-        dataAvg = self.fluxavg_mat.dot(data)
-        return dataAvg
 
     def fluxAvgOld(self,data,psin_inds=None):
         if psin_inds is None: psin_inds = np.arange(self.psin_surf.size,dtype=int) 
@@ -527,7 +539,94 @@ class _load(object):
     def flux_section_avg(self,data,pinds):
         return np.sum(data[pinds,:]*self.node_vol[pinds,np.newaxis])/np.sum(self.node_vol[pinds]*data.shape[1])
     
-    
+
+    def load_ff_mapping(self):
+        self.ff_map_names = ["ff_1dp_fwd","ff_1dp_rev","ff_hdp_fwd","ff_hdp_rev"]
+        for ff_name in self.ff_map_names:
+            fn       =self.xgc_path+'xgc.'+ff_name
+            try:
+                nelement = self.readCmd(fn,'nelement')
+                eindex   = self.readCmd(fn,'eindex')-1
+                value    = self.readCmd(fn,'value')
+                nrows    = self.readCmd(fn,'nrows')
+                ncols    = self.readCmd(fn,'ncols')
+                dl_par   = self.readCmd(fn,'dl_par')
+                self.__setattr__(ff_name,self.create_sparse_xgc(nelement, eindex, value, m=nrows, n=ncols))
+                #
+                varn     = ff_name+'_dl'
+                self.__setattr__(varn,dl_par)
+            except:
+                self.__setattr__(ff_name,0)
+
+
+    def gen_ff2real_mapping(self):
+        from scipy.sparse import csr_matrix
+        #
+        print("Generating forward half-integer plane ff-to-real mapping...")
+        #
+        cols        = np.zeros(self.ff_hdp_fwd.indices.size ,dtype=self.ff_hdp_fwd.indices.dtype)
+        rows        = np.zeros(self.ff_hdp_fwd.indices.size ,dtype=self.ff_hdp_fwd.indices.dtype)
+        data        = np.zeros(self.ff_hdp_fwd.indices.size ,dtype=self.ff_hdp_fwd.data.dtype)
+        data_sum    = np.zeros(self.ff_hdp_fwd.indptr.size-1,dtype=self.ff_hdp_fwd.data.dtype)
+        node_vol_ff = self.readCmd(self.mesh_file,'node_vol_ff1')
+        #
+        # Step 1: Generate the inverse mapping from the real2ff matrix
+        for i in range(self.ff_hdp_fwd.indices.size):
+            j=self.ff_hdp_fwd.indices[i]
+            data_sum[j]+=self.ff_hdp_fwd.data[i]*node_vol_ff[j]
+            rows[i]=j
+            cols[i]=np.min((np.where(self.ff_hdp_fwd.indptr>i))[0])-1
+            data[i]=self.ff_hdp_fwd.data[i]
+            if np.fmod(i,10000)==0:
+                print("gen_ff2real, step 1: i=",i,"/",self.ff_hdp_fwd.indices.size-1)
+        #
+        # Step 2: Normalize the matrix rows and fill empty rows using the reverse real2ff mapping
+        for i in range(data_sum.size):
+            if data_sum[i]>0:
+                data[(np.where(rows==i))[0]]/=data_sum[i]
+            else:
+                # Append data from ff_hdp_rev to rows, cols and data
+                j0    = self.ff_hdp_rev.indptr[i]
+                j1    = self.ff_hdp_rev.indptr[i+1]-1
+                if j1>=j0:
+                    data1 = self.ff_hdp_rev.data[j0:j1]
+                    cols1 = self.ff_hdp_rev.indices[j0:j1]
+                    rows1 = np.zeros(j1-j0+1) + i
+                    rows  = np.concatenate((rows,rows1))
+                    cols  = np.concatenate((cols,cols1))
+            if np.fmod(i,10000)==0:
+                print("gen_ff2real, step 2: i=",i,"/",data_dum.size-1)
+        #
+        # Step 3: Generate sparse CSR matrix from data:
+        self.ff2real_hdp_fwd = csr_sparse((data,(rows,cols)))
+
+
+
+    def load_grad_mat(self):
+        fn = self.xgc_path+'xgc.grad_rz'
+        try:
+            # Flag indicating whether gradient is (R,Z) or (psi,theta)
+            self.grad_mat_basis = self.readCmd(fn,'basis')
+            # Set up matrix for psi/R derivative
+            nelement            = self.readCmd(fn,'nelement_r')
+            eindex              = self.readCmd(fn,'eindex_r')-1
+            value               = self.readCmd(fn,'value_r')
+            nrows               = self.readCmd(fn,'m_r')
+            ncols               = self.readCmd(fn,'n_r')
+            self.grad_mat_psi_r = self.create_sparse_xgc(nelement,eindex,value,m=nrows,n=ncols)
+            # Set up matrix for theta/Z derivative
+            nelement              = self.readCmd(fn,'nelement_z')
+            eindex                = self.readCmd(fn,'eindex_z')-1
+            value                 = self.readCmd(fn,'value_z')
+            nrows                 = self.readCmd(fn,'m_z')
+            ncols                 = self.readCmd(fn,'n_z')
+            self.grad_mat_theta_z = self.create_sparse_xgc(nelement,eindex,value,m=nrows,n=ncols)
+        except:
+            self.grad_mat_psi_r   = 0
+            self.grad_mat_theta_z = 0
+            self_grad_mat_basis   = 0
+
+
     def loadf0mesh(self):
         ##f0 mesh data
         self.f0mesh_file = self.xgc_path+'xgc.f0.mesh'
@@ -687,9 +786,13 @@ class xgc1Load(_load):
         """
         #from read_fluc_single import read_fluc_single #gives no module error
         
-        self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
-        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
-        self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
+        self.eden   = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.dpot   = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.epara  = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.epsi   = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.etheta = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.As     = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        self.pot0   = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
         #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
          #   import adios
@@ -703,10 +806,22 @@ class xgc1Load(_load):
         def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
             import adios2 as ad
             flucFile = ad.open(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp','r')
-            dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            dum = readCmd(flucFile,'dpot',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            dpot1 = np.transpose(dum)
+            #dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
             pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
-            eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-            return i,dpot1,pot01,eden1
+            #eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            dum = readCmd(flucFile,'eden',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )
+            eden1 = np.transpose(dum)
+            dum = readCmd(flucFile,'epara',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )
+            epara1 = np.transpose(dum)
+            dum = readCmd(flucFile,'epsi',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )
+            epsi1 = np.transpose(dum)
+            dum = readCmd(flucFile,'etheta',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )
+            etheta1 = np.transpose(dum)
+            dum = readCmd(flucFile,'apars',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )
+            as1 = np.transpose(dum)
+            return i,dpot1,pot01,eden1,epara1,epsi1,etheta1,as1
         
         #import time
         #start = time.time() #ipyparallel
@@ -748,7 +863,10 @@ class xgc1Load(_load):
         #except:
         for i in range(self.Ntimes): 
             sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i],self.epara[:,:,i],\
+              self.epsi[:,:,i],self.etheta[:,:,i],self.As[:,:,i]\
+            = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,\
+                               self.rzInds,self.phi_start,self.phi_end)
                 
         #for i in range(self.Ntimes): #same as the for loop above
         #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
@@ -951,8 +1069,97 @@ class xgc1Load(_load):
             kfspec = gaussian_filter(np.abs(kfspec), sigma=5)
         
         return k,f,kfspec
-    
-    
+
+    # Calculates the 2nd order accurate finite difference derivative
+    # of field along the magnetic field, i.e., b.grad(field)
+    def GradParX(self,field):
+        if field.ndim!=2:
+            print("GradParX: Wrong array shape of field, must be (nnode,nphi)")
+            return -1
+        nphi  = field.shape[1]
+        nnode = field.shape[0]
+        if nnode!=self.ff_1dp_fwd.shape[0]:
+            return -1
+        sgn   = np.sign(self.bfield[0,2])
+        l_l   = self.ff_1dp_rev_dl
+        l_r   = self.ff_1dp_fwd_dl
+        l_tot = l_r+l_l
+        bdotgrad_field = np.zeros_like(field)
+        for iphi in range(nphi):
+            iphi_l  = iphi-1 if iphi>0 else nphi-1
+            iphi_r  = np.fmod((iphi+1),nphi)
+            field_l = self.ff_1dp_rev.dot(field[:,iphi_l])
+            field_r = self.ff_1dp_fwd.dot(field[:,iphi_r])
+            #
+            bdotgrad_field[:,iphi] = sgn * (-(    l_r)/(l_l*l_tot)*field_l        \
+                                            +(l_r-l_l)/(l_l*l_r  )*field[:,iphi]  \
+                                            +(    l_l)/(l_r*l_tot)*field_r        )
+        return bdotgrad_field
+
+    # Calculates the (psi,theta)/(R,Z) derivative of field.
+    def GradPlane(self,field):
+        if field.ndim>2:
+            print("GradPlane: Wrong array shape of field, must be (nnode,nphi) or (nnode)")
+            return -1
+        nnode = field.shape[0]
+        if field.ndim==2:
+            field_loc = field
+            nphi = field.shape[1]
+        else:
+            nphi           = 1
+            field_loc      = np.zeros((nnode,nphi),dtype=field.dtype)
+            field_loc[:,0] = field
+        grad_field = np.zeros((nnode,nphi,2),dtype=field.dtype)
+        for iphi in range(nphi):
+            grad_field[:,iphi,0] = self.grad_mat_psi_r.dot(field_loc[:,iphi])
+            grad_field[:,iphi,1] = self.grad_mat_theta_z.dot(field_loc[:,iphi])
+        return grad_field
+
+
+    # Calculates the gradient of field on the XGC mesh
+    # (d/dl_psi,d/dl_theta,d/dl_par) or (d/dR,d/dZ,d/d_lpar)
+    def GradAll(self,field):
+        if field.ndim!=2:
+            print("GradParX: Wrong array shape of field, must be (nnode,nphi)")
+            return -1
+        nphi  = field.shape[1]
+        nnode = field.shape[0]
+        grad_field = np.zeros((nnode,nphi,3))
+        grad_field[:,:,0:2] = self.GradPlane(field)
+        grad_field[:,:,2]   = self.GradParX(field)
+        return grad_field
+
+
+    # Converts field into field-following representation (projection to midplane of
+    # of a toroidal section)
+    # input is expected to have shape (nnode,nphi,dim_field) or (nnode,nphi) (assuming dim_field=1)
+    # output will be (nphi,nnode,dim_field,2) for dim_field=3 or
+    # (nphi,nnode,2) for dim_field=1
+    def conv_real2ff(self,field):
+        if (field.ndim==3):
+            field_work = field
+        elif (field.ndim==2):
+            field_work = np.zeros((field.shape[0],field.shape[1],1),dtype=field.dtype)
+            field_work[:,:,0] = field[:,:]
+        else:
+            print("conv_real2ff: input field has wrong shape.")
+            return -1
+        fdim = field_work.shape[2]
+        nphi = field_work.shape[1]
+        field_ff = np.zeros((field_work.shape[0],nphi,fdim,2),dtype=field_work.dtype)
+        for iphi in range(nphi):
+            iphi_l  = iphi-1 if iphi>0 else nphi-1
+            iphi_r  = iphi
+            for j in range(fdim):
+                field_ff[:,iphi,j,0] = self.ff_hdp_rev.dot(field_work[:,iphi_l,j])
+                field_ff[:,iphi,j,1] = self.ff_hdp_fwd.dot(field_work[:,iphi_r,j])
+        field_ff = np.transpose(field_ff,(1,0,2,3))
+        if fdim==1:
+            field_ff = (np.transpose(field_ff,(0,1,3,2)))[:,:,:]
+        #
+        return field_ff
+
+
 class xgcaLoad(_load):
     def __init__(self,xgc_path,**kwargs):
         #call parent loading init, including mesh and equilibrium
