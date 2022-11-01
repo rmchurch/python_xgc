@@ -392,8 +392,8 @@ class _load(object):
             itemp_par=self.oneddiag['i_parallel_mean_en_avg']
             itemp_per=self.oneddiag['i_perp_temperature_avg']
         except:
-            itemp_par=self.oneddiag['i_parallel_mean_en_1d']
-            itemp_per=self.oneddiag['i_perp_temperature_1d']
+            itemp_par=self.oneddiag['i_parallel_mean_en_df_1d']
+            itemp_per=self.oneddiag['i_perp_temperature_df_1d']
         self.Ti1d=(itemp_par+itemp_per)*2./3
         
         try:
@@ -401,14 +401,14 @@ class _load(object):
             etemp_per=self.oneddiag['e_perp_temperature_avg']
             self.Te1d=(etemp_par+etemp_per)*2./3
             #read electron density
-            self.ne1d = self.oneddiag['e_gc_density_1d']
+            self.ne1d = self.oneddiag['e_gc_density_df_1d']
         except:
             try:
-                etemp_par=self.oneddiag['e_parallel_mean_en_1d']
-                etemp_per=self.oneddiag['e_perp_temperature_1d']
+                etemp_par=self.oneddiag['e_parallel_mean_en_df_1d']
+                etemp_per=self.oneddiag['e_perp_temperature_df_1d']
                 self.Te1d=(etemp_par+etemp_per)*2./3
                 #read electron density
-                self.ne1d = self.oneddiag['e_gc_density_1d']
+                self.ne1d = self.oneddiag['e_gc_density_df_1d']
             except: #ion only sim
                 etemp_par = itemp_par
                 etemp_per = itemp_per
