@@ -14,7 +14,16 @@ def mtanh(x,c0,c1,c2,c3,c4):
 def fit_mtanh(xdata,ydata,**kwargs):
     fac = 1.
     if ydata.max() > 1e10:  fac = 1e19
-    a,aCovar=curve_fit(mtanh,xdata,ydata/fac,**kwargs)
+    #get initial guesses
+    Ldata = ydata/np.abs(np.gradient(ydata,xdata))
+    pedloc = xdata[np.argmax(Ldata)]
+    pedmin = ydata.min()/fac
+    pedmax = ydata.max()/fac
+    pedwidth = np.std(Ldata - Ldata.min())
+    p0 = [pedloc, pedwidth, pedmax, pedmin, 0.0]
+    #fit 
+    a,aCovar=curve_fit(mtanh,xdata,ydata/fac, p0 = p0, **kwargs)
+    #rescale
     a[2]=a[2]*fac
     a[3]=a[3]*fac
     return a,aCovar
@@ -214,7 +223,7 @@ class mesh_xgc():
                 self.Rmid_mesh = np.append(self.Rmid_mesh,self.calc_Rmid(psin_max))
         return spacing
 
-    def write_spacing(self, xgca=True):
+    def write_spacing(self, fact_dpol = 3, xgca=True):
         #create inter_curve_spacing_file
         psinSurf = [1.0]
         Rsurf = [np.interp(1.0,self.psin_mesh,self.Rmid_mesh)]
@@ -254,7 +263,7 @@ class mesh_xgc():
         
         #write dpol file
         dpol = np.gradient(Rsurf) #equal dR and dpol
-        if xgca: dpol = 3*dpol #can be 3-5x for neoclassical
+        if xgca: dpol = fact_dpol*dpol #can be 3-5x for neoclassical
         with open(file_dpol,'w') as f:
             f.write(str(len(psinSurf))+'\n')
             for (p,d) in zip(psinSurf,dpol):
