@@ -86,8 +86,16 @@ class _load(object):
                 f.close()
                 return data
         
+        def isbp5():
+            return int(ad.__version__.split('.')[1])>=9
+
         def openAdios2(x):
-            return ad.open(str(x)+'.bp','r')
+            f = ad.open(str(x)+'.bp','r')
+            #strange bug for BP5 (>=v2.9.0), needs to step
+            if isbp5():
+                f = f.__next__()
+            return f
+
         def readAdios2(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
@@ -99,12 +107,13 @@ class _load(object):
             else:
                 f = openAdios2(x)
         
-            nstep = int(f.available_variables()[v]['AvailableStepsCount'])
+            nstep = f.steps() #int(f.available_variables()[v]['AvailableStepsCount'])
             nsize = f.available_variables()[v]['Shape']
             if nstep==1:
                 data = f.read(v)[inds]
             elif nsize != '': #mostly xgc.oneddiag
                 nsize = int(nsize)
+                #if isbp5():
                 data = f.read(v,start=[0], count=[nsize], step_start=0, step_count=nstep)
             else: #mostly xgc.oneddiag
                 data = f.read(v,start=[], count=[], step_start=0, step_count=nstep)
