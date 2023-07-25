@@ -16,11 +16,17 @@ def fit_mtanh(xdata,ydata,**kwargs):
     if ydata.max() > 1e10:  fac = 1e19
     #get initial guesses
     Ldata = ydata/np.abs(np.gradient(ydata,xdata))
-    pedloc = xdata[np.argmax(Ldata)]
+    pedloc = xdata[np.argmax(1./Ldata)]
     pedmin = ydata.min()/fac
     pedmax = ydata.max()/fac
-    pedwidth = np.std(Ldata - Ldata.min())
-    p0 = [pedloc, pedwidth, pedmax, pedmin, 0.0]
+    if pedmax>1: pedmax=1
+    pedwidth = 1./np.std(1./Ldata)
+    #p0 = [pedloc, pedwidth, pedmax, pedmin, 0.0]
+    p0 = [0.95, 0.05, pedmax, pedmin, 0.0]
+    #make sure feasible guess
+    if 'bounds' in kwargs:
+        p0 = np.minimum(p0,kwargs['bounds'][1])
+        p0 = np.maximum(p0,kwargs['bounds'][0])
     #fit 
     a,aCovar=curve_fit(mtanh,xdata,ydata/fac, p0 = p0, **kwargs)
     #rescale
@@ -44,9 +50,9 @@ class pfile():
     
 
     def read_pfile(self,pfilename):
+        xdata = {}
+        ydata = {}
         labels = []
-        xdata = []
-        ydata = []
         i = -1; j = 0
         f = open(pfilename)
         for line in f:
@@ -58,15 +64,22 @@ class pfile():
             elif ('psinorm' in line):
                 N = int(line.strip().split()[0])
                 i += 1
-                xdata += [np.empty((N,))]
-                ydata += [np.empty((N,))]
+                label = line.strip().split()[2].split('(')[0]
+                labels += [label]
+                xdata[label] = np.empty((N,))
+                ydata[label] = np.empty((N,))
                 j = 0
-                labels += [line.strip().split()[2]]
             else:
-                xdata[i][j],ydata[i][j] = np.array(line.strip().split()[0:2]).astype('float')
+                xdata[label][j],ydata[label][j] = np.array(line.strip().split()[0:2]).astype('float')
                 j += 1
         return xdata,ydata,labels
 
+
+    def find_label(self,label):
+        for l in self.labels:
+            if label in l:
+                return l
+        return ''
 
     def write_fits(self):
         shotstr,timestr = os.path.basename(self.pfilename).split('.')
@@ -91,50 +104,53 @@ class pfile():
 
     def fit_pfile(self):
         #fit ne
+        label = self.find_label('ne')
         lowbnds = np.zeros((5,))
         upbnds = np.ones((5,))
         #force the base to match min value
-        upbnds[3] = self.ydata[0].min()
+        upbnds[3] = self.ydata[label].min()
 
-        ane,anec = fit_mtanh(self.xdata[0][self.xdata[0]>0.7],self.ydata[0][self.xdata[0]>0.7],bounds=(lowbnds,upbnds))
-        dp = np.diff(self.xdata[0][-50:]).mean()
-        psinSOLne = np.arange(self.xdata[0][-1]+dp,self.xdata[0][-1]+25*dp,dp )
-        psinneOut = np.hstack( (self.xdata[0],psinSOLne) )
+        ane,anec = fit_mtanh(self.xdata[label][self.xdata[label]>0.7],self.ydata[label][self.xdata[label]>0.7],bounds=(lowbnds,upbnds))
+        dp = np.diff(self.xdata[label][-50:]).mean()
+        psinSOLne = np.arange(self.xdata[label][-1]+dp,self.xdata[label][-1]+25*dp,dp )
+        psinneOut = np.hstack( (self.xdata[label],psinSOLne) )
 
         #neSolFit = mtanh(psinSOLne,*ane)
         lambdane_psin = 2.9676 * 9e-3 #hardcoded average midplane lambda_ne in psin units (8.6 mm)
-        neSolFit = self.ydata[0][-1]*np.exp(-(psinSOLne - self.xdata[0][-1])/lambdane_psin)
-        neOut = np.hstack( (self.ydata[0], neSolFit) )
+        neSolFit = self.ydata[label][-1]*np.exp(-(psinSOLne - self.xdata[label][-1])/lambdane_psin)
+        neOut = np.hstack( (self.ydata[label], neSolFit) )
 
 
         #fit Te
+        label = self.find_label('te')
         lowbnds = np.zeros((5,))
         upbnds = np.ones((5,))
         lowbnds[3] = 10./1e3
         upbnds[3] = 20./1e3
 
-        aTe,aTec = fit_mtanh(self.xdata[1][self.xdata[1]>0.7],self.ydata[1][self.xdata[1]>0.7],bounds=(lowbnds,upbnds))
-        dp = np.diff(self.xdata[1][-50:]).mean()
-        psinSOLTe = np.arange(self.xdata[1][-1]+dp,self.xdata[1][-1]+25*dp,dp )
-        psinTeOut = np.hstack( (self.xdata[1],psinSOLTe) )
+        aTe,aTec = fit_mtanh(self.xdata[label][self.xdata[label]>0.7],self.ydata[label][self.xdata[label]>0.7],bounds=(lowbnds,upbnds))
+        dp = np.diff(self.xdata[label][-50:]).mean()
+        psinSOLTe = np.arange(self.xdata[label][-1]+dp,self.xdata[label][-1]+25*dp,dp )
+        psinTeOut = np.hstack( (self.xdata[label],psinSOLTe) )
 
         TeSolFit = mtanh(psinSOLTe,*aTe)
-        TeOut = np.hstack( (self.ydata[1], TeSolFit) )
+        TeOut = np.hstack( (self.ydata[label], TeSolFit) )
         TeOut = TeOut*1e3 #keV -> eV
 
         #fit Ti
+        label = self.find_label('ti')
         lowbnds = np.zeros((5,))
         upbnds = np.ones((5,))
         lowbnds[3] = 10./1e3
         upbnds[3] = 200./1e3
 
-        aTi,aTic = fit_mtanh(self.xdata[3][self.xdata[3]>0.7],self.ydata[3][self.xdata[3]>0.7],bounds=(lowbnds,upbnds))
-        dp = np.diff(self.xdata[3][-50:]).mean()
-        psinSOLTi = np.arange(self.xdata[3][-1]+dp,self.xdata[3][-1]+25*dp,dp )
-        psinTiOut = np.hstack( (self.xdata[3],psinSOLTi) )
+        aTi,aTic = fit_mtanh(self.xdata[label][self.xdata[label]>0.7],self.ydata[label][self.xdata[label]>0.7],bounds=(lowbnds,upbnds))
+        dp = np.diff(self.xdata[label][-50:]).mean()
+        psinSOLTi = np.arange(self.xdata[label][-1]+dp,self.xdata[label][-1]+25*dp,dp )
+        psinTiOut = np.hstack( (self.xdata[label],psinSOLTi) )
 
         TiSolFit = mtanh(psinSOLTi,*aTi)
-        TiOut = np.hstack( (self.ydata[3], TiSolFit) )
+        TiOut = np.hstack( (self.ydata[label], TiSolFit) )
         TiOut = TiOut*1e3 #keV -> eV
 
         results = {'psinneOut':psinneOut, 'neOut': neOut, 
@@ -144,13 +160,13 @@ class pfile():
         
         #impurities
         for i in range(1,4): 
-            indnz = [ind for ind,s, in enumerate(self.labels) if 'nz'+str(i) in s]  
-            if indnz:
-                dp = np.diff(self.xdata[indnz[0]][-50:]).mean()
-                psinSOLnz = np.arange(self.xdata[indnz[0]][-1]+dp,self.xdata[indnz[0]][-1]+25*dp,dp )
-                psinnzOut = np.hstack( (self.xdata[indnz[0]],psinSOLnz) )
-                nzSolFit = self.ydata[indnz[0]][-1]*np.exp(-(psinSOLnz - self.xdata[indnz[0]][-1])/lambdane_psin)
-                nzOut = np.hstack( (self.ydata[indnz[0]], nzSolFit) )
+            label = self.find_label('nz'+str(i))
+            if label:
+                dp = np.diff(self.xdata[label][-50:]).mean()
+                psinSOLnz = np.arange(self.xdata[label][-1]+dp,self.xdata[label][-1]+25*dp,dp )
+                psinnzOut = np.hstack( (self.xdata[label],psinSOLnz) )
+                nzSolFit = self.ydata[label][-1]*np.exp(-(psinSOLnz - self.xdata[label][-1])/lambdane_psin)
+                nzOut = np.hstack( (self.ydata[label], nzSolFit) )
                 results['psinnz'+str(i)+'Out'] = psinnzOut
                 results['nz'+str(i)+'Out'] = nzOut
 
