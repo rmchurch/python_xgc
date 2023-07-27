@@ -365,7 +365,8 @@ class _load(object):
         
         #read in volume information (used for radial fluxes calculation)
         #try:
-        fv = self.openCmd('xgc.volumes')
+        self.volumes_file=self.xgc_path+'xgc.volumes'
+        fv = self.openCmd(self.volumes_file)
         self.vol1d = self.readCmd(fv,'diag_1d_vol')
         psi_mks = self.oneddiag['psi_mks']
         if len(psi_mks.shape)>1:
@@ -646,8 +647,18 @@ class _load(object):
         vspace_vol = self.f0_grid_vol_vonly[isp,:]
         return np.einsum('ijk,ik->jk',f0,volfac)*vspace_vol[:,np.newaxis]
         
-        
+
+    def calc_ne0_Te0(self,psin=None):
+        if psin is None: psin=self.psin
+        # temperature and density (equilibrium) on the psi mesh
+        te0 = splev(psin,self.te0_sp)
+        # avoid temperature <= 0
+        te0[te0<np.min(self.Te1d)/10] = np.min(self.Te1d)/10
+        ne0 = splev(psin,self.ne0_sp)
+        ne0[ne0<np.min(self.ne1d)/10] = np.min(self.ne1d)/10
+        return ne0,te0
     
+
 class xgc1Load(_load):
     def __init__(self,xgc_path,phi_start=0,phi_end=None,skip_fluc=False,**kwargs):
         #call parent loading init, including mesh and equilibrium
@@ -656,7 +667,7 @@ class xgc1Load(_load):
         
         #read in number of planes
         fluc_file0 = self.xgc_path + 'xgc.3d.' + str(self.time_steps[0]).zfill(5)
-        self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[1]
+        self.Nplanes=self.readCmd(fluc_file0,'dpot').shape[0]
         # assert isinstance(phi_start,int), "phi_start must be a plane index (Int)"
         # assert isinstance(phi_end,int), "phi_end must be a plane index (Int)"
         self.phi_start=int(phi_start)
@@ -685,10 +696,12 @@ class xgc1Load(_load):
         this loading method doesn't differentiate them and will read all of them.
         
         """
-        #from read_fluc_single import read_fluc_single #gives no module error
-        
-        self.eden = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
-        self.dpot = np.zeros( (len(self.RZ[:,0]), self.Nplanes, self.Ntimes) )
+        from read_fluc_single import read_fluc_single #gives no module error
+        import adios2 as ad
+        from concurrent.futures import ProcessPoolExecutor
+
+        self.eden = np.zeros( (self.Nplanes, len(self.RZ[:,0]), self.Ntimes) )
+        self.dpot= np.zeros( (self.Nplanes, len(self.RZ[:,0]), self.Ntimes) )
         self.pot0 = np.zeros( (len(self.RZ[:,0]), self.Ntimes) )
         
         #def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
@@ -698,16 +711,36 @@ class xgc1Load(_load):
             #pot01 = flucFile['pot0'][rzInds]
             #eden1 = flucFile['eden'][rzInds,phi_start:(phi_end+1)]
             #return i,dpot1,pot01,eden1
-           
              
-        def read_fluc_single(i,readCmd,xgc_path,rzInds,phi_start,phi_end):
-            import adios2 as ad
-            flucFile = ad.open(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp','r')
-            dpot1 = readCmd(flucFile,'dpot',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-            pot01 = readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
-            eden1 = readCmd(flucFile,'eden',inds=(rzInds,)+(slice(phi_start,phi_end+1),) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
-            return i,dpot1,pot01,eden1
+        #def read_fluc_single(ins):
+        #    i = ins[0]; xgc_path = ins[1]
+        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end): #seems to be a different version of the below method
+        #def read_fluc_single(i,xgc_path,rzInds,phi_start,phi_end):
+        #    flucFile = ad.open(xgc_path + 'xgc.3d.'+str(i).zfill(5)+'.bp','r')
+        #    dpot1 = ad.read('dpot')
+        #    poti01 = ad.read('pot0')
+        #    eden1 = ad.read('eden')
+        #    flucFile.close()
+        #    print(i)
+        #    return i,dpot1,pot01,eden1
+            #dpot1 = self.readCmd(flucFile,'dpot',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
+            #pot01 = self.readCmd(flucFile,'pot0',inds=(rzInds,) )#[rzInds]
+            #eden1 = self.readCmd(flucFile,'eden',inds=(slice(phi_start,phi_end+1),)+(rzInds,) )#[self.rzInds,self.phi_start:(self.phi_end+1)]
         
+        #func = lambda i: read_fluc_single(i,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+        tinds = range(self.t_start,self.t_end+1)
+        #num_cpus = psutil.cpu_count(logical=False)
+        #out = joblib.Parallel(n_jobs=num_cpus,verbose=10)(joblib.delayed(func)(tind) for tind in tinds)
+        with ProcessPoolExecutor() as executor:
+            futures = [executor.submit(read_fluc_single,tind,self.xgc_path,self.rzInds,self.phi_start,self.phi_end) for tind in tinds]
+            print('after results')
+            for i,future in enumerate(futures):
+                out = future.result()
+                tind = out[0]
+                assert(i == (tind - self.t_start )) 
+                self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = out[1],out[2],out[3]
+                print("%d/%d done" % (i,tinds[-1]))
+            #print('Read time: '+str(time.time()-start))
         #import time
         #start = time.time() #ipyparallel
         #def read_fluc_single(i,openCmd,xgc_path,rzInds,phi_start,phi_end): #for ipyparallel
@@ -746,9 +779,10 @@ class xgc1Load(_load):
         #print 'Read time: '+str(time.time()-start)
         
         #except:
-        for i in range(self.Ntimes): 
-            sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
-            _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
+        #####THIS IS THE NORMAL SINGLE-PROCESS
+        #for i in range(self.Ntimes): 
+        #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
+        #    _,self.dpot[:,:,i],self.pot0[:,i],self.eden[:,:,i] = read_fluc_single(self.t_start + i,self.readCmd,self.xgc_path,self.rzInds,self.phi_start,self.phi_end)
                 
         #for i in range(self.Ntimes): #same as the for loop above
         #    sys.stdout.write('\r\tLoading file ['+str(i)+'/'+str(self.Ntimes)+']')
@@ -852,19 +886,11 @@ class xgc1Load(_load):
         
         """
         
-        if psin is None: psin=self.psin
-        
-        # temperature and density (equilibrium) on the psi mesh
-        te0 = splev(psin,self.te0_sp)
-        # avoid temperature <= 0
-        te0[te0<np.min(self.Te1d)/10] = np.min(self.Te1d)/10
-        ne0 = splev(psin,self.ne0_sp)
-        ne0[ne0<np.min(self.ne1d)/10] = np.min(self.ne1d)/10
-        
+        ne0,Te0 = self.calc_ne0_Te0(psin) 
         
         #neAdiabatic = ne0*exp(dpot/te0)
-        factAdiabatic = np.exp(np.einsum('i...,i...->i...',self.dpot,1./te0))
-        self.neAdiabatic = np.einsum('i...,i...->i...',ne0,factAdiabatic)
+        factAdiabatic = np.exp(np.einsum('ni...,i...->ni...',self.dpot,1./Te0))
+        self.neAdiabatic = np.einsum('i...,ni...->ni...',ne0,factAdiabatic)
         
         #ne = neAdiatbatic + dneKinetic
         self.n_e = self.neAdiabatic + self.eden
