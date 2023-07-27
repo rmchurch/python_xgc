@@ -86,8 +86,16 @@ class _load(object):
                 f.close()
                 return data
         
+        def isbp5():
+            return int(ad.__version__.split('.')[1])>=9
+
         def openAdios2(x):
-            return ad.open(str(x)+'.bp','r')
+            f = ad.open(str(x)+'.bp','r')
+            #strange bug for BP5 (>=v2.9.0), needs to step
+            if isbp5():
+                f = f.__next__()
+            return f
+
         def readAdios2(x,v,inds=Ellipsis):
             if '/' in v: v = '/'+v
             #v = '/'+v #this may be necessary for older xgc files
@@ -99,12 +107,13 @@ class _load(object):
             else:
                 f = openAdios2(x)
         
-            nstep = int(f.available_variables()[v]['AvailableStepsCount'])
+            nstep = f.steps() #int(f.available_variables()[v]['AvailableStepsCount'])
             nsize = f.available_variables()[v]['Shape']
             if nstep==1:
                 data = f.read(v)[inds]
             elif nsize != '': #mostly xgc.oneddiag
                 nsize = int(nsize)
+                #if isbp5():
                 data = f.read(v,start=[0], count=[nsize], step_start=0, step_count=nstep)
             else: #mostly xgc.oneddiag
                 data = f.read(v,start=[], count=[], step_start=0, step_count=nstep)
@@ -646,6 +655,21 @@ class _load(object):
         
         vspace_vol = self.f0_grid_vol_vonly[isp,:]
         return np.einsum('ijk,ik->jk',f0,volfac)*vspace_vol[:,np.newaxis]
+
+    def plot_profiles1d(self,timeinds=[0,-1]):
+        """Plot the basic plasma profiles"""
+        fig,ax = plt.subplots(1,3,sharex=True,figsize=(10,4))
+        for ti in timeinds:
+            if ti<0: ti = self.ne1d.shape[0]+ti
+            ax[0].plot(self.psin1d,self.ne1d[ti,:],label="t=%d"%(ti+1))
+            ax[1].plot(self.psin1d,self.Te1d[ti,:],label="t=%d"%(ti+1))
+            ax[2].plot(self.psin1d,self.Ti1d[ti,:],label="t=%d"%(ti+1))
+        for i in range(3):
+            ax[i].set_xlabel('$\psi_N$')
+            ax[i].legend()
+        ax[0].set_title('$n_e$')
+        ax[1].set_title('$T_e$')
+        ax[2].set_title('$T_i$')
         
 
     def calc_ne0_Te0(self,psin=None):
