@@ -87,7 +87,10 @@ class _load(object):
                 return data
         
         def isbp5():
-            return int(ad.__version__.split('.')[1])>=9
+            try:
+                return int(ad.__version__.split('.')[1])>=9
+            except:
+                return False
 
         def openAdios2(x):
             f = ad.open(str(x)+'.bp','r')
